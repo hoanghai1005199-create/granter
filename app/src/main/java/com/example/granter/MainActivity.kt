@@ -123,6 +123,8 @@ class MainActivity : Activity() {
         val row5 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         row5.addView(blueButton("KIỂM TRA KẾT NỐI FCM") { FcmCheck.open(this) }
             .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
+        row5.addView(blueButton("XEM MILLET") { showMillet() }
+            .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
 
         val row6 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         row6.addView(blueButton("SỬA TẤT CẢ + BẬT TỰ ĐỘNG GIỮ") { confirmFixAll() }
@@ -345,22 +347,67 @@ class MainActivity : Activity() {
         try { startForegroundService(Intent(this, GuardService::class.java)) } catch (e: Exception) {}
     }
 
+    /** Đọc danh sách MILLET_NO_RESTRICT_APP hiện tại (đọc không cần quyền đặc biệt). */
+    private fun showMillet() {
+        val raw = try { Settings.System.getString(contentResolver, Guard.KEY) } catch (e: Throwable) { null }
+        val list = (raw ?: "").split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        if (list.isEmpty()) {
+            tvLog.text = "MILLET_NO_RESTRICT_APP đang trống (hoặc không đọc được).\n" +
+                    "Có thể PowerKeeper đã xóa. Bấm BẬT TỰ ĐỘNG GIỮ để ghi lại."
+            return
+        }
+        val want = Guard.wanted(this).toSet()
+        val sb = StringBuilder("Millet đang có ${list.size} gói:\n\n")
+        for (pkg in list) {
+            val label = try {
+                packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+            } catch (e: Exception) { null }
+            val tag = if (pkg in want) "🛡" else "•"
+            sb.append("$tag ${label ?: "(chưa cài)"}\n   $pkg\n")
+        }
+        val missing = want.filter { it !in list }
+        if (missing.isNotEmpty()) {
+            sb.append("\n⚠ Đang thiếu so với danh sách cần giữ:\n")
+            missing.forEach { sb.append("   $it\n") }
+        }
+        sb.append("\n🛡 = gói Granter giữ (mặc định, đã ghim, đã sửa)")
+        tvLog.text = sb.toString()
+    }
+
+    private fun openWriteSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                android.net.Uri.parse("package:$packageName")))
+        } catch (e: Exception) { toast("Không mở được trang cấp quyền") }
+    }
+
     private fun enableGuard() {
         tvLog.text = "Đang bật tự động giữ...\n"
         thread {
-            if (!Guard.canWrite(this)) {
-                val run = backend() ?: return@thread
-                run("pm grant $packageName android.permission.WRITE_SECURE_SETTINGS")
+            // Có sẵn ADB/Shizuku thì cấp quyền ghi cài đặt bảo mật (bền hơn, giữ sau khi tắt gỡ lỗi USB)
+            if (!Guard.hasSecure(this) && (shizukuAlive() || AdbBackend.isConnected(this))) {
+                val run = backend()
+                run?.invoke("pm grant $packageName android.permission.WRITE_SECURE_SETTINGS")
             }
+            // Không có ADB: dùng quyền "Sửa đổi cài đặt hệ thống"
             if (!Guard.canWrite(this)) {
-                log("Chưa cấp được quyền ghi cài đặt hệ thống.\nKết nối ADB (hoặc Shizuku) rồi bấm lại.\n" +
-                        AdbBackend.lastError)
+                runOnUiThread { openWriteSettings() }
+                log("Cần bật quyền \"Sửa đổi cài đặt hệ thống\" cho HH tool.\n" +
+                        "Đã mở trang cấp quyền: bật xong thì quay lại bấm BẬT TỰ ĐỘNG GIỮ lần nữa.\n" +
+                        "(Không cần bật gỡ lỗi USB.)")
+                return@thread
+            }
+            if (!Guard.applyMillet(this)) {
+                log("Có quyền nhưng không ghi được MILLET_NO_RESTRICT_APP.\n" +
+                        "Có thể HyperOS chặn ghi khóa này bằng quyền thường. " +
+                        "Hãy cấp WRITE_SECURE_SETTINGS qua ADB/Shizuku một lần.")
                 return@thread
             }
             prefs.edit().putBoolean("guard_on", true).apply()
             Guard.fire(this)
             runOnUiThread { startGuard() }
-            log("✅ Đã bật tự động giữ.\n" +
+            val mode = if (Guard.hasSecure(this)) "WRITE_SECURE_SETTINGS" else "Sửa đổi cài đặt hệ thống"
+            log("✅ Đã bật tự động giữ (quyền: $mode).\n" +
                     "• Ghi Millet no-restrict cho Google + app đã ghim + HH tool\n" +
                     "• Bị ghi đè hoặc bật màn hình sẽ tự ghi lại và đá FCM\n" +
                     "• Tự chạy lại sau khi khởi động máy\n\n" +
