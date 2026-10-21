@@ -141,7 +141,8 @@ object HhServer {
                 "echo setsid=\$(command -v setsid); id").trim().take(600)
         lastError = "Không khởi động được máy chủ.\n$err" +
                 (if (out.isNotBlank()) "\n${out.trim().take(200)}" else "") +
-                (if (log.isNotEmpty()) "\nNhật ký: $log" else "")
+                (if (log.isNotEmpty()) "\nNhật ký: $log" else "") +
+                "\nCHẨN ĐOÁN ADB:\n" + AdbBackend.probe(ctx)
         return false
     }
 }

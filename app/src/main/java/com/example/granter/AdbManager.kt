@@ -114,4 +114,33 @@ object AdbBackend {
             "ERR ${(e.cause ?: e).message}"
         }
     }
+
+    /** Chẩn đoán: thử vài kiểu mở luồng lệnh và báo kết quả thô (để biết ADB thật sự chạy lệnh được không). */
+    fun probe(ctx: Context): String {
+        val sb = StringBuilder()
+        for (svc in listOf("shell:id", "exec:id", "shell:echo hi; sleep 1; echo bye")) {
+            val t0 = System.currentTimeMillis()
+            try {
+                val st = get(ctx).openStream(svc)
+                val ins = st.openInputStream()
+                val bo = java.io.ByteArrayOutputStream()
+                val buf = ByteArray(1024)
+                var e = "EOF"
+                try {
+                    while (true) {
+                        val n = ins.read(buf)
+                        if (n < 0) break
+                        bo.write(buf, 0, n)
+                    }
+                } catch (x: Throwable) {
+                    e = x.javaClass.simpleName + ":" + x.message
+                }
+                try { st.close() } catch (ignored: Throwable) {}
+                sb.append("$svc -> '${String(bo.toByteArray()).trim()}' [$e] ${System.currentTimeMillis() - t0}ms\n")
+            } catch (x: Throwable) {
+                sb.append("$svc -> OPEN FAIL ${x.javaClass.simpleName}:${x.message}\n")
+            }
+        }
+        return sb.toString()
+    }
 }
