@@ -4,7 +4,8 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
     <application
-        android:label="Granter"
+        android:icon="@mipmap/ic_launcher"
+        android:label="HH tool"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
         <provider

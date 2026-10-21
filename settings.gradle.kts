@@ -11,5 +11,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "Granter"
+rootProject.name = "HHTool"
 include(":app")
