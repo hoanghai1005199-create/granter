@@ -46,10 +46,11 @@ class MainActivity : Activity() {
         else -> true
     }
 
-    private val BG = Color.parseColor("#FCE4EC")
-    private val BLUE = Color.parseColor("#EC407A")
-    private val BAR = Color.parseColor("#F48FB1")
-    private val DARK = Color.parseColor("#AD1457")
+    private val BG = Color.parseColor("#FEF4F7")
+    private val BLUE = Color.parseColor("#F2A0BC")
+    private val ACCENT_TEXT = Color.parseColor("#B04A6E")
+    private val BAR = Color.parseColor("#FBD2E0")
+    private val DARK = Color.parseColor("#6D4C5B")
 
     private var selected: AppItem? = null
     private lateinit var tvSelected: TextView
@@ -70,7 +71,7 @@ class MainActivity : Activity() {
 
     private fun blueButton(text: String, onClick: () -> Unit) = Button(this).apply {
         this.text = text
-        setTextColor(Color.WHITE)
+        setTextColor(DARK)
         backgroundTintList = ColorStateList.valueOf(BLUE)
         setOnClickListener { onClick() }
     }
@@ -114,7 +115,7 @@ class MainActivity : Activity() {
         if (tid != 0) d.findViewById<TextView>(tid)?.setTextColor(DARK)
         listOf(android.content.DialogInterface.BUTTON_POSITIVE,
             android.content.DialogInterface.BUTTON_NEGATIVE).forEach {
-            d.getButton(it)?.setTextColor(BLUE)
+            d.getButton(it)?.setTextColor(ACCENT_TEXT)
         }
     }
 
@@ -175,16 +176,24 @@ class MainActivity : Activity() {
         })
         root.addView(pinnedBox)
 
+        val chipColors = mapOf(
+            "user" to Pair(Color.parseColor("#FBD9E4"), Color.parseColor("#F2A0BC")),
+            "social" to Pair(Color.parseColor("#D6EAFB"), Color.parseColor("#8EC1F0")),
+            "bank" to Pair(Color.parseColor("#D9F0DC"), Color.parseColor("#8FD19A")),
+            "all" to Pair(Color.parseColor("#FBD9E4"), Color.parseColor("#F2A0BC")))
         val chips = mutableListOf<Pair<String, Button>>()
         var refreshList: () -> Unit = {}
         fun paintChips() = chips.forEach { (m, b) ->
-            b.background = shape(if (m == mode) DARK else Color.parseColor("#F06292"), false)
+            val (light, strong) = chipColors.getValue(m)
+            b.background = shape(if (m == mode) strong else light, false)
+            b.setTypeface(null, if (m == mode) android.graphics.Typeface.BOLD
+                else android.graphics.Typeface.NORMAL)
         }
         val chipBar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         listOf("user" to "Của tôi", "social" to "Mạng xã hội",
             "bank" to "Ngân hàng", "all" to "Tất cả").forEach { (m, name) ->
             val b = Button(this).apply {
-                text = name; isAllCaps = false; setTextColor(Color.WHITE)
+                text = name; isAllCaps = false; setTextColor(DARK)
                 stateListAnimator = null
                 setPadding(dp(16), 0, dp(16), 0)
                 layoutParams = LinearLayout.LayoutParams(-2, dp(40)).apply { setMargins(dp(4), dp(4), dp(4), dp(4)) }
