@@ -1,6 +1,13 @@
 package com.example.granter
 
 import android.app.Activity
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.os.IBinder
+import org.lsposed.hiddenapibypass.HiddenApiBypass
+import rikka.shizuku.ShizukuBinderWrapper
+import rikka.shizuku.SystemServiceHelper
+import android.content.pm.ApplicationInfo
 import android.content.res.ColorStateList
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -13,7 +20,31 @@ import kotlin.concurrent.thread
 
 class MainActivity : Activity() {
 
-    data class AppItem(val label: String, val pkg: String)
+    data class AppItem(val label: String, val pkg: String, val system: Boolean, val category: Int)
+
+    private var mode = "user"   // user | social | bank | all
+
+    private val socialPkgs = setOf(
+        "com.zing.zalo", "com.facebook.katana", "com.facebook.orca", "com.facebook.lite",
+        "com.facebook.mlite", "com.instagram.android", "org.telegram.messenger",
+        "com.zhiliaoapp.musically", "com.ss.android.ugc.trill", "com.twitter.android",
+        "com.whatsapp", "com.viber.voip", "com.discord", "com.snapchat.android",
+        "com.pinterest", "com.linkedin.android", "com.reddit.frontpage",
+        "org.thoughtcrime.securesms", "com.threads.android", "com.instagram.barcelona",
+        "com.google.android.youtube", "com.line.android", "jp.naver.line.android"
+    )
+    private val bankKeys = listOf(
+        "bank", "ngân hàng", "momo", "mservice", "zalopay", "vnpay", "viettelpay",
+        "mbmobile", "vcb", "vietcom", "vietin", "bidv", "techcom", "agri", "tpb",
+        "sacom", "vpbank", "hdbank", "msb", "shb", "ocb", "acb", "napas"
+    )
+
+    private fun matches(a: AppItem): Boolean = when (mode) {
+        "user" -> !a.system
+        "social" -> a.category == ApplicationInfo.CATEGORY_SOCIAL || a.pkg in socialPkgs
+        "bank" -> bankKeys.any { a.pkg.lowercase().contains(it) || a.label.lowercase().contains(it) }
+        else -> true
+    }
 
     private val BG = Color.parseColor("#DCEBFF")        // nền xanh dương nhạt
     private val BLUE = Color.parseColor("#1E88E5")      // nút xanh
@@ -79,17 +110,44 @@ class MainActivity : Activity() {
             setTextColor(Color.parseColor("#0D47A1"))
         })
         root.addView(pinnedBox)
+
+        // Thanh lọc
+        val chips = mutableListOf<Pair<String, Button>>()
+        var refreshList: () -> Unit = {}
+        fun paintChips() = chips.forEach { (m, b) ->
+            b.backgroundTintList = ColorStateList.valueOf(
+                if (m == mode) Color.parseColor("#0D47A1") else Color.parseColor("#64B5F6"))
+        }
+        val chipBar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        listOf("user" to "Của tôi", "social" to "Mạng xã hội",
+            "bank" to "Ngân hàng", "all" to "Tất cả").forEach { (m, name) ->
+            val b = Button(this).apply {
+                text = name; isAllCaps = false; setTextColor(Color.WHITE)
+                setOnClickListener { mode = m; paintChips(); refreshList() }
+            }
+            chips += m to b; chipBar.addView(b)
+        }
+        paintChips()
+        root.addView(HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false; addView(chipBar)
+        })
+
         root.addView(search); root.addView(list)
         root.addView(tvSelected); root.addView(row); root.addView(scroll)
         setContentView(root)
 
         all = packageManager.getInstalledApplications(0)
-            .map { AppItem(packageManager.getApplicationLabel(it).toString(), it.packageName) }
+            .map {
+                val sys = (it.flags and ApplicationInfo.FLAG_SYSTEM) != 0 &&
+                        (it.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0
+                AppItem(packageManager.getApplicationLabel(it).toString(),
+                    it.packageName, sys, it.category)
+            }
             .sortedBy { it.label.lowercase() }
 
         fun show(filter: String) {
             val items = all.filter {
-                it.label.contains(filter, true) || it.pkg.contains(filter, true)
+                matches(it) && (it.label.contains(filter, true) || it.pkg.contains(filter, true))
             }
             list.adapter = object : ArrayAdapter<AppItem>(
                 this, android.R.layout.simple_list_item_2, items) {
@@ -106,7 +164,8 @@ class MainActivity : Activity() {
                 tvSelected.text = "Đã chọn: ${items[i].label} (${items[i].pkg})"
             }
         }
-        show("")
+        refreshList = { show(search.text.toString()) }
+        refreshList()
         search.addTextChangedListener(object : android.text.TextWatcher {
             override fun afterTextChanged(s: android.text.Editable?) = show(s.toString())
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
@@ -151,11 +210,45 @@ class MainActivity : Activity() {
                 if (out.isBlank() || out.startsWith("Added")) ok++
                 else sb.append("• $c\n  → ${out.take(80)}\n")
             }
+            val ch = enableChannels(pkg)
             runOnUiThread {
-                tvLog.text = "✅ ${app.label}: $ok/${cmds.size} lệnh OK\n\n" +
+                tvLog.text = "✅ ${app.label}: $ok/${cmds.size} lệnh OK\n🔔 $ch\n\n" +
                         "Lệnh bị bỏ qua (bình thường nếu quyền không áp dụng):\n$sb"
             }
         }
+    }
+
+    // Bật lại mọi kênh thông báo đang bị tắt (cần Shizuku)
+    private fun enableChannels(pkg: String): String = try {
+        HiddenApiBypass.addHiddenApiExemptions("L")
+        val binder = ShizukuBinderWrapper(SystemServiceHelper.getSystemService("notification"))
+        val cls = Class.forName("android.app.INotificationManager")
+        val nm = Class.forName("android.app.INotificationManager\$Stub")
+            .getMethod("asInterface", IBinder::class.java).invoke(null, binder)!!
+        val uid = packageManager.getApplicationInfo(pkg, 0).uid
+        val i = Int::class.javaPrimitiveType!!
+        val b = Boolean::class.javaPrimitiveType!!
+        try {
+            cls.getMethod("setNotificationsEnabledForPackage", String::class.java, i, b)
+                .invoke(nm, pkg, uid, true)
+        } catch (_: Exception) {}
+        val slice = cls.getMethod("getNotificationChannelsForPackage", String::class.java, i, b)
+            .invoke(nm, pkg, uid, false)!!
+        val list = slice.javaClass.getMethod("getList").invoke(slice) as List<*>
+        var fixed = 0
+        for (c in list) {
+            val ch = c as NotificationChannel
+            if (ch.importance == NotificationManager.IMPORTANCE_NONE) {
+                ch.importance = NotificationManager.IMPORTANCE_DEFAULT
+                cls.getMethod("updateNotificationChannelForPackage",
+                    String::class.java, i, NotificationChannel::class.java)
+                    .invoke(nm, pkg, uid, ch)
+                fixed++
+            }
+        }
+        "Kênh thông báo: bật lại $fixed/${list.size} kênh đang tắt"
+    } catch (e: Throwable) {
+        "Không bật được kênh thông báo: ${(e.cause ?: e).message?.take(120)}"
     }
 
     private fun sh(cmd: String): String = try {
