@@ -120,6 +120,14 @@ class MainActivity : Activity() {
         row4.addView(blueButton("TẮT TỰ ĐỘNG") { disableGuard() }
             .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
 
+        val row5 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        row5.addView(blueButton("KIỂM TRA KẾT NỐI FCM") { FcmCheck.open(this) }
+            .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
+
+        val row6 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        row6.addView(blueButton("SỬA TẤT CẢ MẠNG XÃ HỘI + NGÂN HÀNG") { confirmFixAll() }
+            .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
+
         tvLog = TextView(this).apply { setTextColor(DARK) }
         val scroll = ScrollView(this).apply {
             layoutParams = LinearLayout.LayoutParams(-1, 0, 0.8f)
@@ -153,7 +161,7 @@ class MainActivity : Activity() {
         })
 
         root.addView(search); root.addView(list)
-        root.addView(tvSelected); root.addView(row); root.addView(row2); root.addView(row3); root.addView(row4); root.addView(scroll)
+        root.addView(tvSelected); root.addView(row); root.addView(row2); root.addView(row3); root.addView(row4); root.addView(row5); root.addView(row6); root.addView(scroll)
         setContentView(root)
 
         all = packageManager.getInstalledApplications(0)
@@ -261,6 +269,10 @@ class MainActivity : Activity() {
                 "Kết nối thất bại. Hãy bật Gỡ lỗi không dây (cần Wi-Fi) và ghép nối trước.\n" +
                         AdbBackend.lastError)
             updateStatus()
+            // Lần đầu kết nối: tự cấp đủ quyền cho chính HH tool (giống nút CẤP QUYỀN)
+            if (ok && !Guard.canWrite(this)) {
+                runOnUiThread { grantAll(AppItem("HH tool", packageName, false, -1)) }
+            }
         }
     }
 
@@ -451,6 +463,62 @@ class MainActivity : Activity() {
 
             log("✅ ${app.label}: $ok/${cmds.size} lệnh OK\n🔔 ${ch.take(200)}\n🛡 ${ml.take(200)}\n\n" +
                     "Lệnh bị bỏ qua (bình thường nếu quyền không áp dụng):\n$sb")
+        }
+    }
+
+    // ---------- Sửa hàng loạt: mạng xã hội + ngân hàng ----------
+    private fun isSocial(a: AppItem) =
+        a.category == ApplicationInfo.CATEGORY_SOCIAL || a.pkg in socialPkgs
+
+    private fun isBank(a: AppItem) =
+        bankKeys.any { a.pkg.lowercase().contains(it) || a.label.lowercase().contains(it) }
+
+    private fun fixTargets(): List<AppItem> = all.filter {
+        it.pkg != packageName && (!it.system || it.pkg in socialPkgs) && (isSocial(it) || isBank(it))
+    }
+
+    private fun confirmFixAll() {
+        val n = fixTargets().size
+        if (n == 0) { toast("Không thấy ứng dụng mạng xã hội / ngân hàng nào"); return }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Sửa tất cả")
+            .setMessage("Sẽ sửa thông báo và chạy nền cho $n ứng dụng mạng xã hội + ngân hàng trên máy. Tiếp tục?")
+            .setPositiveButton("Sửa") { _, _ -> fixAll() }
+            .setNegativeButton("Hủy", null)
+            .show()
+    }
+
+    /** Bản "nhẹ": chỉ những gì liên quan thông báo / chạy nền, không cấp quyền SMS, vị trí, danh bạ... */
+    private fun fixAll() {
+        val targets = fixTargets()
+        tvLog.text = "Đang sửa ${targets.size} ứng dụng...\n"
+        thread {
+            val run = backend() ?: return@thread
+            val done = StringBuilder()
+            targets.forEachIndexed { i, app ->
+                log("Đang sửa ${i + 1}/${targets.size}: ${app.label}\n\n$done")
+                val pkg = app.pkg
+                val cmds = mutableListOf("pm grant $pkg android.permission.POST_NOTIFICATIONS")
+                listOf("RUN_IN_BACKGROUND", "RUN_ANY_IN_BACKGROUND", "POST_NOTIFICATION",
+                    "USE_FULL_SCREEN_INTENT", "SCHEDULE_EXACT_ALARM", "10008")
+                    .forEach { cmds += "appops set $pkg $it allow" }
+                cmds += "dumpsys deviceidle whitelist +$pkg"
+                cmds += "cmd package set-stopped-state --user 0 $pkg false"
+                run(cmds.joinToString("; ") { "$it >/dev/null 2>&1" })
+                try {
+                    val uid = packageManager.getApplicationInfo(pkg, 0).uid
+                    run("CLASSPATH=$packageCodePath app_process /system/bin " +
+                            "com.example.granter.ChannelFixer $pkg $uid 2>&1")
+                } catch (e: Throwable) {}
+                done.append("✓ ${app.label}\n")
+            }
+            val pkgs = targets.map { it.pkg }
+            val ml = run(milletScript(pkgs + Guard.DEFAULT + packageName)).trim()
+            val fixed = prefs.getStringSet("fixed", emptySet())!!.toMutableSet()
+            fixed.addAll(pkgs)
+            prefs.edit().putStringSet("fixed", fixed).apply()
+            log("✅ Đã sửa ${targets.size} ứng dụng\n🛡 ${ml.take(200)}\n\n" +
+                    "Bật TỰ ĐỘNG GIỮ để các app này luôn nằm trong danh sách Millet.\n\n$done")
         }
     }
 

@@ -24,7 +24,9 @@ object Guard {
     fun wanted(ctx: Context): List<String> {
         val pinned = ctx.getSharedPreferences("granter", Context.MODE_PRIVATE)
             .getStringSet("pinned", emptySet()) ?: emptySet()
-        return (DEFAULT + ctx.packageName + pinned).distinct()
+        val fixed = ctx.getSharedPreferences("granter", Context.MODE_PRIVATE)
+            .getStringSet("fixed", emptySet()) ?: emptySet()
+        return (DEFAULT + ctx.packageName + pinned + fixed).distinct()
     }
 
     /** Thêm các gói còn thiếu vào danh sách Millet, giữ nguyên gói đã có. */
