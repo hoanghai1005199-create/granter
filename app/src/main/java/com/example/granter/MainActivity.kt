@@ -12,6 +12,8 @@ import android.net.nsd.NsdServiceInfo
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.text.InputFilter
+import android.text.InputType
 import android.view.View
 import android.view.ViewGroup
 import android.widget.*
@@ -60,6 +62,10 @@ class MainActivity : Activity() {
     private lateinit var all: List<AppItem>
     private val prefs by lazy { getSharedPreferences("granter", MODE_PRIVATE) }
     private var nsdListener: NsdManager.DiscoveryListener? = null
+    private lateinit var pairBox: LinearLayout
+    private lateinit var etCode: EditText
+    private lateinit var etPort: EditText
+    @Volatile private var pairHost: String = ""
 
     private val appOps = listOf(
         "MANAGE_EXTERNAL_STORAGE", "SYSTEM_ALERT_WINDOW", "WRITE_SETTINGS",
@@ -171,7 +177,31 @@ class MainActivity : Activity() {
             addView(tvLog)
         }
 
+        etCode = EditText(this).apply {
+            hint = "Mã ghép nối 6 số"; textSize = 22f; setTextColor(DARK)
+            inputType = InputType.TYPE_CLASS_NUMBER
+            filters = arrayOf<InputFilter>(InputFilter.LengthFilter(6))
+        }
+        etPort = EditText(this).apply {
+            hint = "Cổng (tự điền, khớp dòng IP & Port trong Cài đặt)"; textSize = 16f
+            setTextColor(DARK)
+            inputType = InputType.TYPE_CLASS_NUMBER
+            filters = arrayOf<InputFilter>(InputFilter.LengthFilter(5))
+        }
+        pairBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            addView(TextView(this@MainActivity).apply {
+                text = "Ghép nối ADB: gõ mã 6 số trong hộp Cài đặt vào đây"
+                textSize = 14f; setTextColor(DARK)
+            })
+            addView(etCode)
+            addView(etPort)
+            addView(blueButton("Ghép nối") { doPairInline() })
+        }
+
         root.addView(tvStatus)
+        root.addView(pairBox)
         root.addView(TextView(this).apply {
             text = "Ứng dụng đã ghim (bấm 1 lần là xong)"; textSize = 14f; setTextColor(DARK)
         })
@@ -358,19 +388,15 @@ class MainActivity : Activity() {
             toast("Hãy cho phép thông báo rồi bấm lại")
             return
         }
-        // Ô nhập mã nổi cần quyền "Hiển thị trên ứng dụng khác" (target >= 23 phải bật tay)
-        if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this)) {
-            try {
-                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    android.net.Uri.parse("package:$packageName")))
-            } catch (e: Exception) { toast("Không mở được trang cấp quyền") }
-            toast("Bật \"Hiển thị trên ứng dụng khác\" cho HH tool rồi bấm lại")
-            return
-        }
+        val canOverlay = Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(this)
+        pairHost = ""
+        etCode.setText(""); etPort.setText("")
+        pairBox.visibility = View.VISIBLE
         tvLog.text = "Các bước:\n" +
                 "1. Trong Tùy chọn nhà phát triển, bật Gỡ lỗi không dây.\n" +
                 "2. Bấm \"Ghép nối thiết bị bằng mã ghép nối\".\n" +
-                "3. Ô nhập mã sẽ tự nổi lên: gõ mã 6 số rồi bấm Ghép nối.\n" +
+                "3. Gõ mã 6 số vào ô \"Mã ghép nối\" ở đầu màn hình HH tool rồi bấm Ghép nối.\n" +
+                "(Nên bật chia đôi màn hình: Cài đặt một nửa, HH tool một nửa.)\n" +
                 "Đang chờ cổng ghép nối...\n"
         stopDiscovery()
         val nsd = getSystemService(NSD_SERVICE) as NsdManager
@@ -385,9 +411,15 @@ class MainActivity : Activity() {
                     override fun onResolveFailed(i: NsdServiceInfo?, e: Int) {}
                     override fun onServiceResolved(r: NsdServiceInfo) {
                         val host = r.host?.hostAddress ?: return
+                        pairHost = host
+                        runOnUiThread {
+                            etPort.setText(r.port.toString())
+                            etCode.requestFocus()
+                        }
                         Notif.askCode(this@MainActivity, host, r.port)
-                        PairOverlay.show(applicationContext, host, r.port)
-                        log("Đã thấy cổng ghép nối ${r.port}. Gõ mã 6 số vào ô nổi trên màn hình (hoặc kéo thông báo xuống).")
+                        val split = Build.VERSION.SDK_INT >= 24 && isInMultiWindowMode
+                        if (canOverlay && !split) PairOverlay.show(applicationContext, host, r.port)
+                        log("Đã thấy cổng ghép nối ${r.port}. Gõ mã 6 số vào ô ở đầu màn hình HH tool.")
                         stopDiscovery()
                     }
                 })
@@ -398,8 +430,31 @@ class MainActivity : Activity() {
             nsd.discoverServices("_adb-tls-pairing._tcp", NsdManager.PROTOCOL_DNS_SD, l)
         } catch (e: Exception) { log("Không dò được: ${e.message}") }
         try {
-            startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
+            startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT))
         } catch (ignored: Exception) {}
+    }
+
+    private fun doPairInline() {
+        val code = etCode.text.toString().trim()
+        val port = etPort.text.toString().trim().toIntOrNull()
+        val host = pairHost.ifEmpty { "127.0.0.1" }
+        if (code.length != 6) { toast("Cần đủ 6 số"); return }
+        if (port == null || port < 1024) { toast("Nhập cổng đúng"); return }
+        tvLog.text = "Đang ghép nối...\n"
+        thread {
+            val ok = AdbBackend.pair(applicationContext, host, port, code)
+            if (!ok) {
+                log("❌ Ghép nối thất bại: ${AdbBackend.lastError}\n" +
+                    "Mã và cổng đổi mỗi lần mở hộp. Bấm lại Ghép nối ADB rồi nhập mã mới.")
+                return@thread
+            }
+            val conn = AdbBackend.ensureConnected(applicationContext)
+            log(if (conn) "✅ Ghép nối và kết nối thành công"
+                else "Đã ghép nối. Bấm KẾT NỐI ADB")
+            runOnUiThread { pairBox.visibility = View.GONE; etCode.setText("") }
+            updateStatus()
+        }
     }
 
     private fun stopDiscovery() {
