@@ -1,17 +1,17 @@
 package com.example.granter
 
+import android.Manifest
 import android.app.Activity
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.os.IBinder
-import org.lsposed.hiddenapibypass.HiddenApiBypass
-import rikka.shizuku.ShizukuBinderWrapper
-import rikka.shizuku.SystemServiceHelper
+import android.content.Intent
 import android.content.pm.ApplicationInfo
-import android.content.res.ColorStateList
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Color
+import android.net.nsd.NsdManager
+import android.net.nsd.NsdServiceInfo
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.View
 import android.view.ViewGroup
 import android.widget.*
@@ -46,16 +46,19 @@ class MainActivity : Activity() {
         else -> true
     }
 
-    private val BG = Color.parseColor("#DCEBFF")        // nền xanh dương nhạt
-    private val BLUE = Color.parseColor("#1E88E5")      // nút xanh
+    private val BG = Color.parseColor("#DCEBFF")
+    private val BLUE = Color.parseColor("#1E88E5")
     private val BAR = Color.parseColor("#90CAF9")
+    private val DARK = Color.parseColor("#0D47A1")
 
     private var selected: AppItem? = null
     private lateinit var tvSelected: TextView
     private lateinit var tvLog: TextView
+    private lateinit var tvStatus: TextView
     private lateinit var pinnedBox: LinearLayout
     private lateinit var all: List<AppItem>
     private val prefs by lazy { getSharedPreferences("granter", MODE_PRIVATE) }
+    private var nsdListener: NsdManager.DiscoveryListener? = null
 
     private val appOps = listOf(
         "MANAGE_EXTERNAL_STORAGE", "SYSTEM_ALERT_WINDOW", "WRITE_SETTINGS",
@@ -82,41 +85,44 @@ class MainActivity : Activity() {
             setPadding(32, 48, 32, 32)
         }
 
+        tvStatus = TextView(this).apply { textSize = 13f; setTextColor(DARK) }
         pinnedBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val search = EditText(this).apply { hint = "Tìm ứng dụng..." }
-        val list = ListView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(-1, 0, 1f)
-        }
+        val list = ListView(this).apply { layoutParams = LinearLayout.LayoutParams(-1, 0, 1f) }
         tvSelected = TextView(this).apply {
-            text = "Chưa chọn ứng dụng"; textSize = 15f; setTextColor(Color.parseColor("#0D47A1"))
+            text = "Chưa chọn ứng dụng"; textSize = 15f; setTextColor(DARK)
         }
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val btnGrant = blueButton("CẤP QUYỀN") {
+        row.addView(blueButton("CẤP QUYỀN") {
             selected?.let { grantAll(it) } ?: toast("Hãy chọn ứng dụng trước")
-        }.apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) }
-        val btnPin = blueButton("GHIM / BỎ GHIM") {
+        }.apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
+        row.addView(blueButton("GHIM / BỎ GHIM") {
             selected?.let { togglePin(it.pkg) } ?: toast("Hãy chọn ứng dụng trước")
-        }.apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) }
-        row.addView(btnGrant); row.addView(btnPin)
+        }.apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
 
-        tvLog = TextView(this).apply { setTextColor(Color.parseColor("#0D47A1")) }
+        val row2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        row2.addView(blueButton("GHÉP NỐI ADB") { startPairing() }
+            .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
+        row2.addView(blueButton("KẾT NỐI ADB") { connectAdb() }
+            .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
+
+        tvLog = TextView(this).apply { setTextColor(DARK) }
         val scroll = ScrollView(this).apply {
             layoutParams = LinearLayout.LayoutParams(-1, 0, 0.8f)
             addView(tvLog)
         }
 
+        root.addView(tvStatus)
         root.addView(TextView(this).apply {
-            text = "Ứng dụng đã ghim (bấm 1 lần là xong)"; textSize = 14f
-            setTextColor(Color.parseColor("#0D47A1"))
+            text = "Ứng dụng đã ghim (bấm 1 lần là xong)"; textSize = 14f; setTextColor(DARK)
         })
         root.addView(pinnedBox)
 
-        // Thanh lọc
         val chips = mutableListOf<Pair<String, Button>>()
         var refreshList: () -> Unit = {}
         fun paintChips() = chips.forEach { (m, b) ->
             b.backgroundTintList = ColorStateList.valueOf(
-                if (m == mode) Color.parseColor("#0D47A1") else Color.parseColor("#64B5F6"))
+                if (m == mode) DARK else Color.parseColor("#64B5F6"))
         }
         val chipBar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         listOf("user" to "Của tôi", "social" to "Mạng xã hội",
@@ -133,7 +139,7 @@ class MainActivity : Activity() {
         })
 
         root.addView(search); root.addView(list)
-        root.addView(tvSelected); root.addView(row); root.addView(scroll)
+        root.addView(tvSelected); root.addView(row); root.addView(row2); root.addView(scroll)
         setContentView(root)
 
         all = packageManager.getInstalledApplications(0)
@@ -174,6 +180,114 @@ class MainActivity : Activity() {
         refreshPinned()
     }
 
+    override fun onResume() {
+        super.onResume()
+        updateStatus()
+    }
+
+    // ---------- Trạng thái / backend ----------
+    private fun shizukuAlive(): Boolean = try { Shizuku.pingBinder() } catch (_: Throwable) { false }
+
+    private fun updateStatus() {
+        thread {
+            val txt = if (shizukuAlive()) "Chế độ: Shizuku đang chạy"
+            else "Chế độ: ADB tích hợp (" +
+                    (if (AdbBackend.isConnected(this)) "đã kết nối ✅" else "chưa kết nối") + ")"
+            runOnUiThread { tvStatus.text = txt }
+        }
+    }
+
+    /** Trả về hàm chạy lệnh shell, hoặc null (đã ghi lý do vào log). Gọi trong thread nền. */
+    private fun backend(): ((String) -> String)? {
+        if (shizukuAlive()) {
+            if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
+                runOnUiThread {
+                    Shizuku.requestPermission(1)
+                    toast("Hãy cho phép Shizuku rồi bấm lại")
+                }
+                return null
+            }
+            return { s -> shizukuSh(s) }
+        }
+        if (!AdbBackend.ensureConnected(this)) {
+            log("Chưa kết nối ADB.\nBấm GHÉP NỐI ADB (lần đầu) rồi KẾT NỐI ADB.\n" +
+                    AdbBackend.lastError)
+            return null
+        }
+        return { s -> AdbBackend.run(this, s) }
+    }
+
+    private fun shizukuSh(cmd: String): String = try {
+        val m = Shizuku::class.java.getDeclaredMethod(
+            "newProcess", Array<String>::class.java, Array<String>::class.java, String::class.java)
+        m.isAccessible = true
+        val p = m.invoke(null, arrayOf("sh", "-c", cmd), null, null) as Process
+        val out = p.inputStream.bufferedReader().readText() +
+                p.errorStream.bufferedReader().readText()
+        p.waitFor(); out
+    } catch (e: Exception) { "ERR ${e.message}" }
+
+    // ---------- Ghép nối / kết nối ADB ----------
+    private fun connectAdb() {
+        tvLog.text = "Đang kết nối ADB...\n"
+        thread {
+            val ok = AdbBackend.ensureConnected(this)
+            log(if (ok) "Đã kết nối ADB ✅" else
+                "Kết nối thất bại. Hãy bật Gỡ lỗi không dây (cần Wi-Fi) và ghép nối trước.\n" +
+                        AdbBackend.lastError)
+            updateStatus()
+        }
+    }
+
+    private fun startPairing() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 2)
+            toast("Hãy cho phép thông báo rồi bấm lại")
+            return
+        }
+        tvLog.text = "Các bước:\n" +
+                "1. Trong Tùy chọn nhà phát triển, bật Gỡ lỗi không dây.\n" +
+                "2. Bấm \"Ghép nối thiết bị bằng mã ghép nối\".\n" +
+                "3. Kéo thanh thông báo xuống, bấm \"Nhập mã ghép nối\" và gõ mã 6 số.\n" +
+                "Đang chờ cổng ghép nối...\n"
+        stopDiscovery()
+        val nsd = getSystemService(NSD_SERVICE) as NsdManager
+        val l = object : NsdManager.DiscoveryListener {
+            override fun onStartDiscoveryFailed(t: String?, e: Int) { log("Lỗi dò dịch vụ: $e") }
+            override fun onStopDiscoveryFailed(t: String?, e: Int) {}
+            override fun onDiscoveryStarted(t: String?) {}
+            override fun onDiscoveryStopped(t: String?) {}
+            override fun onServiceLost(i: NsdServiceInfo?) {}
+            override fun onServiceFound(info: NsdServiceInfo) {
+                nsd.resolveService(info, object : NsdManager.ResolveListener {
+                    override fun onResolveFailed(i: NsdServiceInfo?, e: Int) {}
+                    override fun onServiceResolved(r: NsdServiceInfo) {
+                        val host = r.host?.hostAddress ?: return
+                        Notif.askCode(this@MainActivity, host, r.port)
+                        log("Đã thấy cổng ghép nối ${r.port}. Kéo thông báo xuống để nhập mã.")
+                        stopDiscovery()
+                    }
+                })
+            }
+        }
+        nsdListener = l
+        try {
+            nsd.discoverServices("_adb-tls-pairing._tcp", NsdManager.PROTOCOL_DNS_SD, l)
+        } catch (e: Exception) { log("Không dò được: ${e.message}") }
+        try {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
+        } catch (_: Exception) {}
+    }
+
+    private fun stopDiscovery() {
+        val l = nsdListener ?: return
+        nsdListener = null
+        try { (getSystemService(NSD_SERVICE) as NsdManager).stopServiceDiscovery(l) } catch (_: Exception) {}
+    }
+
+    // ---------- Ghim ----------
     private fun togglePin(pkg: String) {
         val set = prefs.getStringSet("pinned", emptySet())!!.toMutableSet()
         if (!set.add(pkg)) set.remove(pkg)
@@ -189,13 +303,11 @@ class MainActivity : Activity() {
         }
     }
 
+    // ---------- Cấp quyền ----------
     private fun grantAll(app: AppItem) {
-        if (!Shizuku.pingBinder()) return toast("Shizuku chưa chạy")
-        if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
-            Shizuku.requestPermission(1); return
-        }
         tvLog.text = "Đang cấp quyền cho ${app.label}...\n"
         thread {
+            val run = backend() ?: return@thread
             val pkg = app.pkg
             val cmds = mutableListOf<String>()
             val info = packageManager.getPackageInfo(pkg, PackageManager.GET_PERMISSIONS)
@@ -203,63 +315,35 @@ class MainActivity : Activity() {
             appOps.forEach { cmds += "appops set $pkg $it allow" }
             cmds += "dumpsys deviceidle whitelist +$pkg"
 
+            val script = cmds.joinToString("; ") { "echo \"@@ $it\"; $it 2>&1" }
+            val out = run(script)
+
             var ok = 0
             val sb = StringBuilder()
-            cmds.forEach { c ->
-                val out = sh(c)
-                if (out.isBlank() || out.startsWith("Added")) ok++
-                else sb.append("• $c\n  → ${out.take(80)}\n")
+            var cur: String? = null
+            val body = StringBuilder()
+            fun flush() {
+                val c = cur ?: return
+                val o = body.toString().trim()
+                if (o.isEmpty() || o.startsWith("Added")) ok++
+                else sb.append("• $c\n  → ${o.take(80)}\n")
+                body.setLength(0)
             }
-            val ch = enableChannels(pkg)
-            runOnUiThread {
-                tvLog.text = "✅ ${app.label}: $ok/${cmds.size} lệnh OK\n🔔 $ch\n\n" +
-                        "Lệnh bị bỏ qua (bình thường nếu quyền không áp dụng):\n$sb"
+            for (line in out.lines()) {
+                if (line.startsWith("@@ ")) { flush(); cur = line.substring(3) }
+                else body.append(line).append('\n')
             }
+            flush()
+
+            val uid = packageManager.getApplicationInfo(pkg, 0).uid
+            val ch = run("CLASSPATH=$packageCodePath app_process /system/bin " +
+                    "com.example.granter.ChannelFixer $pkg $uid 2>&1").trim()
+
+            log("✅ ${app.label}: $ok/${cmds.size} lệnh OK\n🔔 ${ch.take(200)}\n\n" +
+                    "Lệnh bị bỏ qua (bình thường nếu quyền không áp dụng):\n$sb")
         }
     }
 
-    // Bật lại mọi kênh thông báo đang bị tắt (cần Shizuku)
-    private fun enableChannels(pkg: String): String = try {
-        HiddenApiBypass.addHiddenApiExemptions("L")
-        val binder = ShizukuBinderWrapper(SystemServiceHelper.getSystemService("notification"))
-        val cls = Class.forName("android.app.INotificationManager")
-        val nm = Class.forName("android.app.INotificationManager\$Stub")
-            .getMethod("asInterface", IBinder::class.java).invoke(null, binder)!!
-        val uid = packageManager.getApplicationInfo(pkg, 0).uid
-        val i = Int::class.javaPrimitiveType!!
-        val b = Boolean::class.javaPrimitiveType!!
-        try {
-            cls.getMethod("setNotificationsEnabledForPackage", String::class.java, i, b)
-                .invoke(nm, pkg, uid, true)
-        } catch (_: Exception) {}
-        val slice = cls.getMethod("getNotificationChannelsForPackage", String::class.java, i, b)
-            .invoke(nm, pkg, uid, false)!!
-        val list = slice.javaClass.getMethod("getList").invoke(slice) as List<*>
-        var fixed = 0
-        for (c in list) {
-            val ch = c as NotificationChannel
-            if (ch.importance == NotificationManager.IMPORTANCE_NONE) {
-                ch.importance = NotificationManager.IMPORTANCE_DEFAULT
-                cls.getMethod("updateNotificationChannelForPackage",
-                    String::class.java, i, NotificationChannel::class.java)
-                    .invoke(nm, pkg, uid, ch)
-                fixed++
-            }
-        }
-        "Kênh thông báo: bật lại $fixed/${list.size} kênh đang tắt"
-    } catch (e: Throwable) {
-        "Không bật được kênh thông báo: ${(e.cause ?: e).message?.take(120)}"
-    }
-
-    private fun sh(cmd: String): String = try {
-        val m = Shizuku::class.java.getDeclaredMethod(
-            "newProcess", Array<String>::class.java, Array<String>::class.java, String::class.java)
-        m.isAccessible = true
-        val p = m.invoke(null, arrayOf("sh", "-c", cmd), null, null) as Process
-        val out = p.inputStream.bufferedReader().readText() +
-                p.errorStream.bufferedReader().readText()
-        p.waitFor(); out.trim()
-    } catch (e: Exception) { "ERR ${e.message}" }
-
+    private fun log(s: String) = runOnUiThread { tvLog.text = s }
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
 }
