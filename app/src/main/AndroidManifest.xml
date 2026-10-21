@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- minSdk 21 < 23 của thư viện Shizuku provider: ép dùng (Shizuku chỉ chạy trên máy Android 6+) -->
+    <uses-sdk tools:overrideLibrary="rikka.shizuku.provider" />
 
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <uses-permission android:name="android.permission.INTERNET" />
