@@ -16,9 +16,16 @@ object Guard {
         "com.google.android.projection.gearhead", "com.xiaomi.barrage"
     )
 
-    fun canWrite(ctx: Context): Boolean =
+    /** Quyền cấp qua ADB/Shizuku (giữ nguyên sau khi tắt gỡ lỗi USB). */
+    fun hasSecure(ctx: Context): Boolean =
         ctx.checkSelfPermission("android.permission.WRITE_SECURE_SETTINGS") ==
                 PackageManager.PERMISSION_GRANTED
+
+    /** Quyền "Sửa đổi cài đặt hệ thống" người dùng tự bật trong Cài đặt, không cần ADB. */
+    fun hasWriteSettings(ctx: Context): Boolean =
+        try { Settings.System.canWrite(ctx) } catch (e: Throwable) { false }
+
+    fun canWrite(ctx: Context): Boolean = hasSecure(ctx) || hasWriteSettings(ctx)
 
     /** Gói cần giữ: mặc định + chính app + các app đã ghim. */
     fun wanted(ctx: Context): List<String> {
@@ -39,7 +46,7 @@ object Guard {
             if (p !in have) { have.add(p); changed = true }
         }
         if (changed) Settings.System.putString(cr, KEY, have.joinToString(","))
-        true
+        else true
     } catch (e: Throwable) {
         false
     }

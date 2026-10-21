@@ -46,10 +46,11 @@ class MainActivity : Activity() {
         else -> true
     }
 
-    private val BG = Color.parseColor("#DCEBFF")
-    private val BLUE = Color.parseColor("#1E88E5")
-    private val BAR = Color.parseColor("#90CAF9")
-    private val DARK = Color.parseColor("#0D47A1")
+    private val BG = Color.parseColor("#FEF4F7")
+    private val BLUE = Color.parseColor("#F2A0BC")
+    private val ACCENT_TEXT = Color.parseColor("#B04A6E")
+    private val BAR = Color.parseColor("#FBD2E0")
+    private val DARK = Color.parseColor("#6D4C5B")
 
     private var selected: AppItem? = null
     private lateinit var tvSelected: TextView
@@ -70,9 +71,60 @@ class MainActivity : Activity() {
 
     private fun blueButton(text: String, onClick: () -> Unit) = Button(this).apply {
         this.text = text
-        setTextColor(Color.WHITE)
+        setTextColor(DARK)
         backgroundTintList = ColorStateList.valueOf(BLUE)
         setOnClickListener { onClick() }
+    }
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    private fun shape(color: Int, oval: Boolean) = android.graphics.drawable.GradientDrawable().apply {
+        setColor(color)
+        if (oval) setShape(android.graphics.drawable.GradientDrawable.OVAL)
+        else cornerRadius = dp(20).toFloat()
+    }
+
+    /** Nút tròn có biểu tượng, nhãn nằm bên dưới (giống màn hình Tính năng). */
+    private fun circleButton(icon: String, label: String, onClick: () -> Unit): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = android.view.Gravity.CENTER_HORIZONTAL
+            setPadding(dp(4), dp(6), dp(4), dp(6))
+            layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+            addView(TextView(context).apply {
+                text = icon; textSize = 24f
+                gravity = android.view.Gravity.CENTER
+                background = shape(Color.WHITE, true)
+                elevation = dp(4).toFloat()
+                layoutParams = LinearLayout.LayoutParams(dp(56), dp(56))
+            })
+            addView(TextView(context).apply {
+                text = label; textSize = 11f; setTextColor(DARK)
+                gravity = android.view.Gravity.CENTER
+                maxLines = 3
+                setPadding(0, dp(6), 0, 0)
+            })
+            setOnClickListener { onClick() }
+        }
+
+    /** Hộp thoại bo góc, nền hồng, chữ/nút cùng tông với giao diện. */
+    private fun styleDialog(d: android.app.AlertDialog) {
+        d.window?.setBackgroundDrawable(shape(BG, false).apply { cornerRadius = dp(24).toFloat() })
+        d.findViewById<TextView>(android.R.id.message)?.setTextColor(DARK)
+        val tid = resources.getIdentifier("alertTitle", "id", "android")
+        if (tid != 0) d.findViewById<TextView>(tid)?.setTextColor(DARK)
+        listOf(android.content.DialogInterface.BUTTON_POSITIVE,
+            android.content.DialogInterface.BUTTON_NEGATIVE).forEach {
+            d.getButton(it)?.setTextColor(ACCENT_TEXT)
+        }
+    }
+
+    private fun circleRow(vararg items: View) = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        items.forEach { addView(it) }
+        repeat(4 - items.size) {
+            addView(View(context).apply { layoutParams = LinearLayout.LayoutParams(0, 1, 1f) })
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -93,40 +145,24 @@ class MainActivity : Activity() {
         tvSelected = TextView(this).apply {
             text = "Chưa chọn ứng dụng"; textSize = 15f; setTextColor(DARK)
         }
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row.addView(blueButton("CẤP QUYỀN") {
-            selected?.let { grantAll(it) } ?: toast("Hãy chọn ứng dụng trước")
-        }.apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
-        row.addView(blueButton("GHIM / BỎ GHIM") {
-            selected?.let { togglePin(it.pkg) } ?: toast("Hãy chọn ứng dụng trước")
-        }.apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
-
-        val row2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row2.addView(blueButton("GHÉP NỐI ADB") { startPairing() }
-            .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
-        row2.addView(blueButton("KẾT NỐI ADB") { connectAdb() }
-            .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
-
-        val row3 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row3.addView(blueButton("MILLET KHÔNG GIỚI HẠN") {
-            selected?.let { milletOnly(it) } ?: toast("Hãy chọn ứng dụng trước")
-        }.apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
-        row3.addView(blueButton("ĐÁNH THỨC FCM") { kickFcm(selected?.pkg) }
-            .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
-
-        val row4 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row4.addView(blueButton("BẬT TỰ ĐỘNG GIỮ") { enableGuard() }
-            .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
-        row4.addView(blueButton("TẮT TỰ ĐỘNG") { disableGuard() }
-            .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
-
-        val row5 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row5.addView(blueButton("KIỂM TRA KẾT NỐI FCM") { FcmCheck.open(this) }
-            .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
-
-        val row6 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row6.addView(blueButton("SỬA TẤT CẢ + BẬT TỰ ĐỘNG GIỮ") { confirmFixAll() }
-            .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
+        val none = { toast("Hãy chọn ứng dụng trước") }
+        val grid = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(circleRow(
+                circleButton("🔑", "Cấp quyền") { selected?.let { grantAll(it) } ?: none() },
+                circleButton("📌", "Ghim / Bỏ ghim") { selected?.let { togglePin(it.pkg) } ?: none() },
+                circleButton("🔗", "Ghép nối ADB") { startPairing() },
+                circleButton("📶", "Kết nối ADB") { connectAdb() }))
+            addView(circleRow(
+                circleButton("🛡", "Millet không giới hạn") { selected?.let { milletOnly(it) } ?: none() },
+                circleButton("🔔", "Đánh thức FCM") { kickFcm(selected?.pkg) },
+                circleButton("🔒", "Bật tự động giữ") { enableGuard() },
+                circleButton("🔓", "Tắt tự động") { disableGuard() }))
+            addView(circleRow(
+                circleButton("📡", "Kiểm tra FCM") { FcmCheck.open(this@MainActivity) },
+                circleButton("📋", "Xem Millet") { showMillet() },
+                circleButton("⚡", "Cấp full quyền chỉ với 1 nhấn") { confirmFixAll() }))
+        }
 
         tvLog = TextView(this).apply { setTextColor(DARK) }
         val scroll = ScrollView(this).apply {
@@ -140,17 +176,27 @@ class MainActivity : Activity() {
         })
         root.addView(pinnedBox)
 
+        val chipColors = mapOf(
+            "user" to Pair(Color.parseColor("#FBD9E4"), Color.parseColor("#F2A0BC")),
+            "social" to Pair(Color.parseColor("#D6EAFB"), Color.parseColor("#8EC1F0")),
+            "bank" to Pair(Color.parseColor("#D9F0DC"), Color.parseColor("#8FD19A")),
+            "all" to Pair(Color.parseColor("#FBD9E4"), Color.parseColor("#F2A0BC")))
         val chips = mutableListOf<Pair<String, Button>>()
         var refreshList: () -> Unit = {}
         fun paintChips() = chips.forEach { (m, b) ->
-            b.backgroundTintList = ColorStateList.valueOf(
-                if (m == mode) DARK else Color.parseColor("#64B5F6"))
+            val (light, strong) = chipColors.getValue(m)
+            b.background = shape(if (m == mode) strong else light, false)
+            b.setTypeface(null, if (m == mode) android.graphics.Typeface.BOLD
+                else android.graphics.Typeface.NORMAL)
         }
         val chipBar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         listOf("user" to "Của tôi", "social" to "Mạng xã hội",
             "bank" to "Ngân hàng", "all" to "Tất cả").forEach { (m, name) ->
             val b = Button(this).apply {
-                text = name; isAllCaps = false; setTextColor(Color.WHITE)
+                text = name; isAllCaps = false; setTextColor(DARK)
+                stateListAnimator = null
+                setPadding(dp(16), 0, dp(16), 0)
+                layoutParams = LinearLayout.LayoutParams(-2, dp(40)).apply { setMargins(dp(4), dp(4), dp(4), dp(4)) }
                 setOnClickListener { mode = m; paintChips(); refreshList() }
             }
             chips += m to b; chipBar.addView(b)
@@ -161,7 +207,7 @@ class MainActivity : Activity() {
         })
 
         root.addView(search); root.addView(list)
-        root.addView(tvSelected); root.addView(row); root.addView(row2); root.addView(row3); root.addView(row4); root.addView(row5); root.addView(row6); root.addView(scroll)
+        root.addView(tvSelected); root.addView(grid); root.addView(scroll)
         setContentView(root)
 
         all = packageManager.getInstalledApplications(0)
@@ -182,7 +228,10 @@ class MainActivity : Activity() {
                 override fun getView(p: Int, v: View?, g: ViewGroup): View {
                     val view = v ?: layoutInflater.inflate(
                         android.R.layout.simple_list_item_2, g, false)
-                    view.findViewById<TextView>(android.R.id.text1).text = items[p].label
+                    view.findViewById<TextView>(android.R.id.text1).apply {
+                        text = items[p].label
+                        setTextColor(Color.parseColor("#E53935"))
+                    }
                     view.findViewById<TextView>(android.R.id.text2).text = items[p].pkg
                     return view
                 }
@@ -287,7 +336,7 @@ class MainActivity : Activity() {
         tvLog.text = "Các bước:\n" +
                 "1. Trong Tùy chọn nhà phát triển, bật Gỡ lỗi không dây.\n" +
                 "2. Bấm \"Ghép nối thiết bị bằng mã ghép nối\".\n" +
-                "3. Kéo thanh thông báo xuống, bấm \"Nhập mã ghép nối\" và gõ mã 6 số.\n" +
+                "3. Ô nhập mã sẽ tự nổi lên: gõ mã 6 số rồi bấm Ghép nối.\n" +
                 "Đang chờ cổng ghép nối...\n"
         stopDiscovery()
         val nsd = getSystemService(NSD_SERVICE) as NsdManager
@@ -303,7 +352,8 @@ class MainActivity : Activity() {
                     override fun onServiceResolved(r: NsdServiceInfo) {
                         val host = r.host?.hostAddress ?: return
                         Notif.askCode(this@MainActivity, host, r.port)
-                        log("Đã thấy cổng ghép nối ${r.port}. Kéo thông báo xuống để nhập mã.")
+                        PairOverlay.show(applicationContext, host, r.port)
+                        log("Đã thấy cổng ghép nối ${r.port}. Gõ mã 6 số vào ô nổi trên màn hình (hoặc kéo thông báo xuống).")
                         stopDiscovery()
                     }
                 })
@@ -336,7 +386,9 @@ class MainActivity : Activity() {
         pinnedBox.removeAllViews()
         val set = prefs.getStringSet("pinned", emptySet())!!
         all.filter { it.pkg in set }.forEach { app ->
-            pinnedBox.addView(blueButton("⚡ ${app.label}") { grantAll(app) })
+            pinnedBox.addView(blueButton("⚡ ${app.label}") { grantAll(app) }.apply {
+                background = shape(BLUE, false); stateListAnimator = null
+            })
         }
     }
 
@@ -345,22 +397,67 @@ class MainActivity : Activity() {
         try { startForegroundService(Intent(this, GuardService::class.java)) } catch (e: Exception) {}
     }
 
+    /** Đọc danh sách MILLET_NO_RESTRICT_APP hiện tại (đọc không cần quyền đặc biệt). */
+    private fun showMillet() {
+        val raw = try { Settings.System.getString(contentResolver, Guard.KEY) } catch (e: Throwable) { null }
+        val list = (raw ?: "").split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        if (list.isEmpty()) {
+            tvLog.text = "MILLET_NO_RESTRICT_APP đang trống (hoặc không đọc được).\n" +
+                    "Có thể PowerKeeper đã xóa. Bấm BẬT TỰ ĐỘNG GIỮ để ghi lại."
+            return
+        }
+        val want = Guard.wanted(this).toSet()
+        val sb = StringBuilder("Millet đang có ${list.size} gói:\n\n")
+        for (pkg in list) {
+            val label = try {
+                packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+            } catch (e: Exception) { null }
+            val tag = if (pkg in want) "🛡" else "•"
+            sb.append("$tag ${label ?: "(chưa cài)"}\n   $pkg\n")
+        }
+        val missing = want.filter { it !in list }
+        if (missing.isNotEmpty()) {
+            sb.append("\n⚠ Đang thiếu so với danh sách cần giữ:\n")
+            missing.forEach { sb.append("   $it\n") }
+        }
+        sb.append("\n🛡 = gói Granter giữ (mặc định, đã ghim, đã sửa)")
+        tvLog.text = sb.toString()
+    }
+
+    private fun openWriteSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                android.net.Uri.parse("package:$packageName")))
+        } catch (e: Exception) { toast("Không mở được trang cấp quyền") }
+    }
+
     private fun enableGuard() {
         tvLog.text = "Đang bật tự động giữ...\n"
         thread {
-            if (!Guard.canWrite(this)) {
-                val run = backend() ?: return@thread
-                run("pm grant $packageName android.permission.WRITE_SECURE_SETTINGS")
+            // Có sẵn ADB/Shizuku thì cấp quyền ghi cài đặt bảo mật (bền hơn, giữ sau khi tắt gỡ lỗi USB)
+            if (!Guard.hasSecure(this) && (shizukuAlive() || AdbBackend.isConnected(this))) {
+                val run = backend()
+                run?.invoke("pm grant $packageName android.permission.WRITE_SECURE_SETTINGS")
             }
+            // Không có ADB: dùng quyền "Sửa đổi cài đặt hệ thống"
             if (!Guard.canWrite(this)) {
-                log("Chưa cấp được quyền ghi cài đặt hệ thống.\nKết nối ADB (hoặc Shizuku) rồi bấm lại.\n" +
-                        AdbBackend.lastError)
+                runOnUiThread { openWriteSettings() }
+                log("Cần bật quyền \"Sửa đổi cài đặt hệ thống\" cho HH tool.\n" +
+                        "Đã mở trang cấp quyền: bật xong thì quay lại bấm BẬT TỰ ĐỘNG GIỮ lần nữa.\n" +
+                        "(Không cần bật gỡ lỗi USB.)")
+                return@thread
+            }
+            if (!Guard.applyMillet(this)) {
+                log("Có quyền nhưng không ghi được MILLET_NO_RESTRICT_APP.\n" +
+                        "Có thể HyperOS chặn ghi khóa này bằng quyền thường. " +
+                        "Hãy cấp WRITE_SECURE_SETTINGS qua ADB/Shizuku một lần.")
                 return@thread
             }
             prefs.edit().putBoolean("guard_on", true).apply()
             Guard.fire(this)
             runOnUiThread { startGuard() }
-            log("✅ Đã bật tự động giữ.\n" +
+            val mode = if (Guard.hasSecure(this)) "WRITE_SECURE_SETTINGS" else "Sửa đổi cài đặt hệ thống"
+            log("✅ Đã bật tự động giữ (quyền: $mode).\n" +
                     "• Ghi Millet no-restrict cho Google + app đã ghim + HH tool\n" +
                     "• Bị ghi đè hoặc bật màn hình sẽ tự ghi lại và đá FCM\n" +
                     "• Tự chạy lại sau khi khởi động máy\n\n" +
@@ -495,11 +592,11 @@ class MainActivity : Activity() {
         val n = fixTargets().size
         if (n == 0) { toast("Không thấy ứng dụng mạng xã hội / ngân hàng nào"); return }
         android.app.AlertDialog.Builder(this)
-            .setTitle("Sửa tất cả")
+            .setTitle("Cấp full quyền")
             .setMessage("Sẽ cấp toàn bộ quyền (giống nút CẤP QUYỀN) cho $n ứng dụng mạng xã hội + ngân hàng, sửa thông báo, rồi bật tự động giữ Millet + FCM. Tiếp tục?")
-            .setPositiveButton("Sửa") { _, _ -> fixAll() }
+            .setPositiveButton("Cấp") { _, _ -> fixAll() }
             .setNegativeButton("Hủy", null)
-            .show()
+            .show().also { styleDialog(it) }
     }
 
     /** Chạy đúng bộ lệnh của nút CẤP QUYỀN cho từng app trong danh sách. */
