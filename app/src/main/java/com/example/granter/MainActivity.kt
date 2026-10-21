@@ -336,7 +336,7 @@ class MainActivity : Activity() {
         tvLog.text = "Các bước:\n" +
                 "1. Trong Tùy chọn nhà phát triển, bật Gỡ lỗi không dây.\n" +
                 "2. Bấm \"Ghép nối thiết bị bằng mã ghép nối\".\n" +
-                "3. Kéo thanh thông báo xuống, bấm \"Nhập mã ghép nối\" và gõ mã 6 số.\n" +
+                "3. Ô nhập mã sẽ tự nổi lên: gõ mã 6 số rồi bấm Ghép nối.\n" +
                 "Đang chờ cổng ghép nối...\n"
         stopDiscovery()
         val nsd = getSystemService(NSD_SERVICE) as NsdManager
@@ -352,7 +352,8 @@ class MainActivity : Activity() {
                     override fun onServiceResolved(r: NsdServiceInfo) {
                         val host = r.host?.hostAddress ?: return
                         Notif.askCode(this@MainActivity, host, r.port)
-                        log("Đã thấy cổng ghép nối ${r.port}. Kéo thông báo xuống để nhập mã.")
+                        PairOverlay.show(applicationContext, host, r.port)
+                        log("Đã thấy cổng ghép nối ${r.port}. Gõ mã 6 số vào ô nổi trên màn hình (hoặc kéo thông báo xuống).")
                         stopDiscovery()
                     }
                 })
