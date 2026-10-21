@@ -86,12 +86,32 @@ object AdbBackend {
         }
     }
 
-    fun run(ctx: Context, script: String): String = try {
-        val st = get(ctx).openStream("shell:$script")
-        val out = String(st.openInputStream().readBytes())
-        try { st.close() } catch (ignored: Exception) {}
-        out
-    } catch (e: Throwable) {
-        "ERR ${(e.cause ?: e).message}"
+    fun run(ctx: Context, script: String): String {
+        return try {
+            val m = get(ctx)
+            if (!m.isConnected && !ensureConnected(ctx)) return "ERR chưa kết nối ADB: $lastError"
+            val st = m.openStream("shell:$script")
+            val ins = st.openInputStream()
+            val bo = java.io.ByteArrayOutputStream()
+            val buf = ByteArray(4096)
+            var err: Throwable? = null
+            try {
+                while (true) {
+                    val n = ins.read(buf)
+                    if (n < 0) break
+                    bo.write(buf, 0, n)
+                }
+            } catch (e: Throwable) {
+                err = e
+            }
+            try { st.close() } catch (ignored: Exception) {}
+            val out = String(bo.toByteArray())
+            // Lệnh xong thì máy đóng luồng: với thư viện này đó có thể là ngoại lệ "Stream closed"
+            // chứ không phải EOF. Chỉ coi là lỗi khi kết nối thật sự đã mất.
+            if (err == null || out.isNotEmpty() || m.isConnected) out
+            else "ERR ${(err.cause ?: err).message}"
+        } catch (e: Throwable) {
+            "ERR ${(e.cause ?: e).message}"
+        }
     }
 }
