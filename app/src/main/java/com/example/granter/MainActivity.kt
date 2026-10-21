@@ -75,6 +75,45 @@ class MainActivity : Activity() {
         setOnClickListener { onClick() }
     }
 
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    private fun shape(color: Int, oval: Boolean) = android.graphics.drawable.GradientDrawable().apply {
+        setColor(color)
+        if (oval) setShape(android.graphics.drawable.GradientDrawable.OVAL)
+        else cornerRadius = dp(20).toFloat()
+    }
+
+    /** Nút tròn có biểu tượng, nhãn nằm bên dưới (giống màn hình Tính năng). */
+    private fun circleButton(icon: String, label: String, onClick: () -> Unit): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = android.view.Gravity.CENTER_HORIZONTAL
+            setPadding(dp(4), dp(6), dp(4), dp(6))
+            layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+            addView(TextView(context).apply {
+                text = icon; textSize = 24f
+                gravity = android.view.Gravity.CENTER
+                background = shape(Color.WHITE, true)
+                elevation = dp(4).toFloat()
+                layoutParams = LinearLayout.LayoutParams(dp(56), dp(56))
+            })
+            addView(TextView(context).apply {
+                text = label; textSize = 11f; setTextColor(DARK)
+                gravity = android.view.Gravity.CENTER
+                maxLines = 2
+                setPadding(0, dp(6), 0, 0)
+            })
+            setOnClickListener { onClick() }
+        }
+
+    private fun circleRow(vararg items: View) = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        items.forEach { addView(it) }
+        repeat(4 - items.size) {
+            addView(View(context).apply { layoutParams = LinearLayout.LayoutParams(0, 1, 1f) })
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (License.local(this) != License.State.ACTIVE) { goLock(); return }
@@ -93,42 +132,24 @@ class MainActivity : Activity() {
         tvSelected = TextView(this).apply {
             text = "Chưa chọn ứng dụng"; textSize = 15f; setTextColor(DARK)
         }
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row.addView(blueButton("CẤP QUYỀN") {
-            selected?.let { grantAll(it) } ?: toast("Hãy chọn ứng dụng trước")
-        }.apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
-        row.addView(blueButton("GHIM / BỎ GHIM") {
-            selected?.let { togglePin(it.pkg) } ?: toast("Hãy chọn ứng dụng trước")
-        }.apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
-
-        val row2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row2.addView(blueButton("GHÉP NỐI ADB") { startPairing() }
-            .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
-        row2.addView(blueButton("KẾT NỐI ADB") { connectAdb() }
-            .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
-
-        val row3 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row3.addView(blueButton("MILLET KHÔNG GIỚI HẠN") {
-            selected?.let { milletOnly(it) } ?: toast("Hãy chọn ứng dụng trước")
-        }.apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
-        row3.addView(blueButton("ĐÁNH THỨC FCM") { kickFcm(selected?.pkg) }
-            .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
-
-        val row4 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row4.addView(blueButton("BẬT TỰ ĐỘNG GIỮ") { enableGuard() }
-            .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
-        row4.addView(blueButton("TẮT TỰ ĐỘNG") { disableGuard() }
-            .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
-
-        val row5 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row5.addView(blueButton("KIỂM TRA KẾT NỐI FCM") { FcmCheck.open(this) }
-            .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
-        row5.addView(blueButton("XEM MILLET") { showMillet() }
-            .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
-
-        val row6 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row6.addView(blueButton("SỬA TẤT CẢ + BẬT TỰ ĐỘNG GIỮ") { confirmFixAll() }
-            .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
+        val none = { toast("Hãy chọn ứng dụng trước") }
+        val grid = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(circleRow(
+                circleButton("🔑", "Cấp quyền") { selected?.let { grantAll(it) } ?: none() },
+                circleButton("📌", "Ghim / Bỏ ghim") { selected?.let { togglePin(it.pkg) } ?: none() },
+                circleButton("🔗", "Ghép nối ADB") { startPairing() },
+                circleButton("📶", "Kết nối ADB") { connectAdb() }))
+            addView(circleRow(
+                circleButton("🛡", "Millet không giới hạn") { selected?.let { milletOnly(it) } ?: none() },
+                circleButton("🔔", "Đánh thức FCM") { kickFcm(selected?.pkg) },
+                circleButton("🔒", "Bật tự động giữ") { enableGuard() },
+                circleButton("🔓", "Tắt tự động") { disableGuard() }))
+            addView(circleRow(
+                circleButton("📡", "Kiểm tra FCM") { FcmCheck.open(this@MainActivity) },
+                circleButton("📋", "Xem Millet") { showMillet() },
+                circleButton("🛠", "Sửa tất cả") { confirmFixAll() }))
+        }
 
         tvLog = TextView(this).apply { setTextColor(DARK) }
         val scroll = ScrollView(this).apply {
@@ -145,14 +166,16 @@ class MainActivity : Activity() {
         val chips = mutableListOf<Pair<String, Button>>()
         var refreshList: () -> Unit = {}
         fun paintChips() = chips.forEach { (m, b) ->
-            b.backgroundTintList = ColorStateList.valueOf(
-                if (m == mode) DARK else Color.parseColor("#64B5F6"))
+            b.background = shape(if (m == mode) DARK else Color.parseColor("#64B5F6"), false)
         }
         val chipBar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         listOf("user" to "Của tôi", "social" to "Mạng xã hội",
             "bank" to "Ngân hàng", "all" to "Tất cả").forEach { (m, name) ->
             val b = Button(this).apply {
                 text = name; isAllCaps = false; setTextColor(Color.WHITE)
+                stateListAnimator = null
+                setPadding(dp(16), 0, dp(16), 0)
+                layoutParams = LinearLayout.LayoutParams(-2, dp(40)).apply { setMargins(dp(4), dp(4), dp(4), dp(4)) }
                 setOnClickListener { mode = m; paintChips(); refreshList() }
             }
             chips += m to b; chipBar.addView(b)
@@ -163,7 +186,7 @@ class MainActivity : Activity() {
         })
 
         root.addView(search); root.addView(list)
-        root.addView(tvSelected); root.addView(row); root.addView(row2); root.addView(row3); root.addView(row4); root.addView(row5); root.addView(row6); root.addView(scroll)
+        root.addView(tvSelected); root.addView(grid); root.addView(scroll)
         setContentView(root)
 
         all = packageManager.getInstalledApplications(0)
@@ -338,7 +361,9 @@ class MainActivity : Activity() {
         pinnedBox.removeAllViews()
         val set = prefs.getStringSet("pinned", emptySet())!!
         all.filter { it.pkg in set }.forEach { app ->
-            pinnedBox.addView(blueButton("⚡ ${app.label}") { grantAll(app) })
+            pinnedBox.addView(blueButton("⚡ ${app.label}") { grantAll(app) }.apply {
+                background = shape(BLUE, false); stateListAnimator = null
+            })
         }
     }
 
