@@ -115,7 +115,7 @@ object HhServer {
     private fun startCommand(ctx: Context, port: Int, tok: String): String =
         "S=''; command -v setsid >/dev/null 2>&1 && S=setsid; " +
                 "CLASSPATH='${ctx.packageCodePath}' \$S nohup app_process /system/bin " +
-                "--nice-name=hhtool_server $CLS $tok $port >$LOG 2>&1 &"
+                "--nice-name=hhtool_server $CLS $tok $port >$LOG 2>&1 </dev/null & sleep 1; echo started"
 
     /**
      * Khởi động máy chủ (hoặc khởi động lại nếu đang chạy bản cũ).
@@ -137,7 +137,8 @@ object HhServer {
             if (version(ctx) == VERSION) return true
         }
         val err = lastError
-        val log = run("cat $LOG 2>&1").trim().take(300)
+        val log = run("ls -l $LOG 2>&1; cat $LOG 2>&1; ps -A 2>/dev/null | grep [h]htool; " +
+                "echo setsid=\$(command -v setsid); id").trim().take(600)
         lastError = "Không khởi động được máy chủ.\n$err" +
                 (if (out.isNotBlank()) "\n${out.trim().take(200)}" else "") +
                 (if (log.isNotEmpty()) "\nNhật ký: $log" else "")
