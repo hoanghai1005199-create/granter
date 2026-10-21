@@ -8,8 +8,8 @@ android {
     compileSdk = 34
     defaultConfig {
         applicationId = "com.example.granter"
-        minSdk = 26
-        targetSdk = 34
+        minSdk = 21
+        targetSdk = 22
         versionCode = 2
         versionName = "1.1"
     }

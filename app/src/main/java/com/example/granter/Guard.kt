@@ -36,8 +36,34 @@ object Guard {
         return (DEFAULT + ctx.packageName + pinned + fixed).distinct()
     }
 
+    /** Lỗi gần nhất khi ghi Millet (để hiện lên log, giúp tìm nguyên nhân). */
+    @Volatile var lastError: String = ""
+
     /** Thêm các gói còn thiếu vào danh sách Millet, giữ nguyên gói đã có. */
-    fun applyMillet(ctx: Context): Boolean = try {
+    fun applyMillet(ctx: Context): Boolean {
+        if (applyDirect(ctx)) return true
+        // Dự phòng: nhờ máy chủ shell ghi hộ (không cần quyền ghi cài đặt của app).
+        return applyViaServer(ctx)
+    }
+
+    private fun applyViaServer(ctx: Context): Boolean {
+        if (!HhServer.ping(ctx)) return false
+        val want = wanted(ctx)
+        val script = "cur=\$(settings --user 0 get system $KEY); [ \"\$cur\" = null ] && cur=''; " +
+                "orig=\"\$cur\"; " +
+                "for p in ${want.joinToString(" ")}; do case \",\$cur,\" in *\",\$p,\"*) ;; " +
+                "*) cur=\"\${cur:+\$cur,}\$p\";; esac; done; " +
+                "[ \"\$cur\" != \"\$orig\" ] && settings --user 0 put system $KEY \"\$cur\"; " +
+                "settings --user 0 get system $KEY"
+        val r = HhServer.exec(ctx, script)
+        if (r == null) { lastError = HhServer.lastError; return false }
+        val have = r.trim().split(",").map { it.trim() }
+        val ok = want.all { it in have }
+        if (!ok) lastError = "Máy chủ shell đã ghi nhưng danh sách Millet chưa khớp: ${r.trim().take(120)}"
+        return ok
+    }
+
+    private fun applyDirect(ctx: Context): Boolean = try {
         val cr = ctx.contentResolver
         val have = (Settings.System.getString(cr, KEY) ?: "")
             .split(",").map { it.trim() }.filter { it.isNotEmpty() }.toMutableList()
@@ -45,9 +71,13 @@ object Guard {
         for (p in wanted(ctx)) {
             if (p !in have) { have.add(p); changed = true }
         }
-        if (changed) Settings.System.putString(cr, KEY, have.joinToString(","))
-        else true
+        if (changed) {
+            val ok = Settings.System.putString(cr, KEY, have.joinToString(","))
+            if (!ok) lastError = "putString trả về false (hệ thống từ chối ghi)"
+            ok
+        } else true
     } catch (e: Throwable) {
+        lastError = e.toString()
         false
     }
 

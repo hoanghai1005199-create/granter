@@ -161,7 +161,8 @@ class MainActivity : Activity() {
             addView(circleRow(
                 circleButton("📡", "Kiểm tra FCM") { FcmCheck.open(this@MainActivity) },
                 circleButton("📋", "Xem Millet") { showMillet() },
-                circleButton("⚡", "Cấp full quyền chỉ với 1 nhấn") { confirmFixAll() }))
+                circleButton("⚡", "Cấp full quyền chỉ với 1 nhấn") { confirmFixAll() },
+                circleButton("🖥", "Máy chủ shell (bật/tắt)") { toggleServer() }))
         }
 
         tvLog = TextView(this).apply { setTextColor(DARK) }
@@ -273,6 +274,7 @@ class MainActivity : Activity() {
     private fun updateStatus() {
         thread {
             val txt = if (shizukuAlive()) "Chế độ: Shizuku đang chạy"
+            else if (HhServer.ping(this)) "Chế độ: Máy chủ shell HH tool đang chạy ✅"
             else "Chế độ: ADB tích hợp (" +
                     (if (AdbBackend.isConnected(this)) "đã kết nối ✅" else "chưa kết nối") + ")"
             runOnUiThread { tvStatus.text = txt }
@@ -290,6 +292,9 @@ class MainActivity : Activity() {
                 return null
             }
             return { s -> shizukuSh(s) }
+        }
+        if (HhServer.ping(this)) {
+            return { s -> HhServer.exec(this, s) ?: "ERR ${HhServer.lastError}" }
         }
         if (!AdbBackend.ensureConnected(this)) {
             log("Chưa kết nối ADB.\nBấm GHÉP NỐI ADB (lần đầu) rồi KẾT NỐI ADB.\n" +
@@ -325,12 +330,41 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Bật/tắt máy chủ shell. Bật lần đầu cần Shizuku hoặc ADB đang kết nối. */
+    private fun toggleServer() {
+        tvLog.text = "Đang xử lý máy chủ shell...\n"
+        thread {
+            if (HhServer.ping(this)) {
+                HhServer.stop(this)
+                Thread.sleep(500)
+                log("Đã tắt máy chủ shell.")
+                updateStatus()
+                return@thread
+            }
+            val run = backend() ?: return@thread
+            val ok = HhServer.start(this, run)
+            log(if (ok) "✅ Máy chủ shell đang chạy.\nTừ giờ có thể tắt gỡ lỗi USB/không dây, " +
+                    "máy chủ vẫn chạy đến khi khởi động lại máy."
+            else "❌ ${HhServer.lastError}")
+            updateStatus()
+        }
+    }
+
     private fun startPairing() {
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 2)
             toast("Hãy cho phép thông báo rồi bấm lại")
+            return
+        }
+        // Ô nhập mã nổi cần quyền "Hiển thị trên ứng dụng khác" (target >= 23 phải bật tay)
+        if (Build.VERSION.SDK_INT >= 23 && !Settings.canDrawOverlays(this)) {
+            try {
+                startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    android.net.Uri.parse("package:$packageName")))
+            } catch (e: Exception) { toast("Không mở được trang cấp quyền") }
+            toast("Bật \"Hiển thị trên ứng dụng khác\" cho HH tool rồi bấm lại")
             return
         }
         tvLog.text = "Các bước:\n" +
@@ -440,7 +474,7 @@ class MainActivity : Activity() {
                 run?.invoke("pm grant $packageName android.permission.WRITE_SECURE_SETTINGS")
             }
             // Không có ADB: dùng quyền "Sửa đổi cài đặt hệ thống"
-            if (!Guard.canWrite(this)) {
+            if (!Guard.canWrite(this) && !HhServer.ping(this)) {
                 runOnUiThread { openWriteSettings() }
                 log("Cần bật quyền \"Sửa đổi cài đặt hệ thống\" cho HH tool.\n" +
                         "Đã mở trang cấp quyền: bật xong thì quay lại bấm BẬT TỰ ĐỘNG GIỮ lần nữa.\n" +
@@ -449,6 +483,8 @@ class MainActivity : Activity() {
             }
             if (!Guard.applyMillet(this)) {
                 log("Có quyền nhưng không ghi được MILLET_NO_RESTRICT_APP.\n" +
+                        "Lỗi thật: ${Guard.lastError}\n" +
+                        "WRITE_SECURE_SETTINGS=${Guard.hasSecure(this)}, WRITE_SETTINGS=${Guard.hasWriteSettings(this)}\n" +
                         "Có thể HyperOS chặn ghi khóa này bằng quyền thường. " +
                         "Hãy cấp WRITE_SECURE_SETTINGS qua ADB/Shizuku một lần.")
                 return@thread
