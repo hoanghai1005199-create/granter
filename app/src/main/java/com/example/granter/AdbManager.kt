@@ -50,7 +50,7 @@ class AdbManager(ctx: Context) : AbsAdbConnectionManager() {
                     .generatePrivate(PKCS8EncodedKeySpec(keyFile.readBytes()))
                 c = CertificateFactory.getInstance("X.509")
                     .generateCertificate(ByteArrayInputStream(certFile.readBytes()))
-            } catch (_: Exception) {
+            } catch (ignored: Exception) {
                 k = null; c = null
             }
         }
@@ -107,7 +107,7 @@ object AdbBackend {
             mgr ?: AdbManager(ctx.applicationContext).also { mgr = it }
         }
 
-    fun isConnected(ctx: Context): Boolean = try { get(ctx).isConnected } catch (_: Throwable) { false }
+    fun isConnected(ctx: Context): Boolean = try { get(ctx).isConnected } catch (ignored: Throwable) { false }
 
     fun pair(ctx: Context, host: String, port: Int, code: String): Boolean = try {
         get(ctx).pair(host, port, code)
@@ -127,7 +127,7 @@ object AdbBackend {
     fun run(ctx: Context, script: String): String = try {
         val st = get(ctx).openStream("shell:$script")
         val out = String(st.openInputStream().readBytes())
-        try { st.close() } catch (_: Exception) {}
+        try { st.close() } catch (ignored: Exception) {}
         out
     } catch (e: Throwable) {
         "ERR ${(e.cause ?: e).message}"

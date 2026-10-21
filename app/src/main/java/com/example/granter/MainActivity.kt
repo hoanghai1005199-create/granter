@@ -77,6 +77,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (License.local(this) != License.State.ACTIVE) { goLock(); return }
         window.statusBarColor = BAR
 
         val root = LinearLayout(this).apply {
@@ -104,6 +105,29 @@ class MainActivity : Activity() {
         row2.addView(blueButton("GHÉP NỐI ADB") { startPairing() }
             .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
         row2.addView(blueButton("KẾT NỐI ADB") { connectAdb() }
+            .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
+
+        val row3 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        row3.addView(blueButton("MILLET KHÔNG GIỚI HẠN") {
+            selected?.let { milletOnly(it) } ?: toast("Hãy chọn ứng dụng trước")
+        }.apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
+        row3.addView(blueButton("ĐÁNH THỨC FCM") { kickFcm(selected?.pkg) }
+            .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
+
+        val row4 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        row4.addView(blueButton("BẬT TỰ ĐỘNG GIỮ") { enableGuard() }
+            .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
+        row4.addView(blueButton("TẮT TỰ ĐỘNG") { disableGuard() }
+            .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
+
+        val row5 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        row5.addView(blueButton("KIỂM TRA KẾT NỐI FCM") { FcmCheck.open(this) }
+            .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
+        row5.addView(blueButton("XEM MILLET") { showMillet() }
+            .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
+
+        val row6 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        row6.addView(blueButton("SỬA TẤT CẢ + BẬT TỰ ĐỘNG GIỮ") { confirmFixAll() }
             .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
 
         tvLog = TextView(this).apply { setTextColor(DARK) }
@@ -139,7 +163,7 @@ class MainActivity : Activity() {
         })
 
         root.addView(search); root.addView(list)
-        root.addView(tvSelected); root.addView(row); root.addView(row2); root.addView(scroll)
+        root.addView(tvSelected); root.addView(row); root.addView(row2); root.addView(row3); root.addView(row4); root.addView(row5); root.addView(row6); root.addView(scroll)
         setContentView(root)
 
         all = packageManager.getInstalledApplications(0)
@@ -180,13 +204,24 @@ class MainActivity : Activity() {
         refreshPinned()
     }
 
+    private fun goLock() {
+        startActivity(Intent(this, LockActivity::class.java))
+        finish()
+    }
+
     override fun onResume() {
         super.onResume()
+        if (isFinishing) return
+        if (License.local(this) != License.State.ACTIVE) { goLock(); return }
+        thread {
+            if (License.refreshIfDue(applicationContext) != License.State.ACTIVE) runOnUiThread { goLock() }
+        }
         updateStatus()
+        if (prefs.getBoolean("guard_on", false) && Guard.canWrite(this)) startGuard()
     }
 
     // ---------- Trạng thái / backend ----------
-    private fun shizukuAlive(): Boolean = try { Shizuku.pingBinder() } catch (_: Throwable) { false }
+    private fun shizukuAlive(): Boolean = try { Shizuku.pingBinder() } catch (ignored: Throwable) { false }
 
     private fun updateStatus() {
         thread {
@@ -236,6 +271,10 @@ class MainActivity : Activity() {
                 "Kết nối thất bại. Hãy bật Gỡ lỗi không dây (cần Wi-Fi) và ghép nối trước.\n" +
                         AdbBackend.lastError)
             updateStatus()
+            // Lần đầu kết nối: tự cấp đủ quyền cho chính HH tool (giống nút CẤP QUYỀN)
+            if (ok && !Guard.canWrite(this)) {
+                runOnUiThread { grantAll(AppItem("HH tool", packageName, false, -1)) }
+            }
         }
     }
 
@@ -278,13 +317,13 @@ class MainActivity : Activity() {
         } catch (e: Exception) { log("Không dò được: ${e.message}") }
         try {
             startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
-        } catch (_: Exception) {}
+        } catch (ignored: Exception) {}
     }
 
     private fun stopDiscovery() {
         val l = nsdListener ?: return
         nsdListener = null
-        try { (getSystemService(NSD_SERVICE) as NsdManager).stopServiceDiscovery(l) } catch (_: Exception) {}
+        try { (getSystemService(NSD_SERVICE) as NsdManager).stopServiceDiscovery(l) } catch (ignored: Exception) {}
     }
 
     // ---------- Ghim ----------
@@ -300,6 +339,134 @@ class MainActivity : Activity() {
         val set = prefs.getStringSet("pinned", emptySet())!!
         all.filter { it.pkg in set }.forEach { app ->
             pinnedBox.addView(blueButton("⚡ ${app.label}") { grantAll(app) })
+        }
+    }
+
+    // ---------- Tự động giữ ----------
+    private fun startGuard() {
+        try { startForegroundService(Intent(this, GuardService::class.java)) } catch (e: Exception) {}
+    }
+
+    /** Đọc danh sách MILLET_NO_RESTRICT_APP hiện tại (đọc không cần quyền đặc biệt). */
+    private fun showMillet() {
+        val raw = try { Settings.System.getString(contentResolver, Guard.KEY) } catch (e: Throwable) { null }
+        val list = (raw ?: "").split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        if (list.isEmpty()) {
+            tvLog.text = "MILLET_NO_RESTRICT_APP đang trống (hoặc không đọc được).\n" +
+                    "Có thể PowerKeeper đã xóa. Bấm BẬT TỰ ĐỘNG GIỮ để ghi lại."
+            return
+        }
+        val want = Guard.wanted(this).toSet()
+        val sb = StringBuilder("Millet đang có ${list.size} gói:\n\n")
+        for (pkg in list) {
+            val label = try {
+                packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+            } catch (e: Exception) { null }
+            val tag = if (pkg in want) "🛡" else "•"
+            sb.append("$tag ${label ?: "(chưa cài)"}\n   $pkg\n")
+        }
+        val missing = want.filter { it !in list }
+        if (missing.isNotEmpty()) {
+            sb.append("\n⚠ Đang thiếu so với danh sách cần giữ:\n")
+            missing.forEach { sb.append("   $it\n") }
+        }
+        sb.append("\n🛡 = gói Granter giữ (mặc định, đã ghim, đã sửa)")
+        tvLog.text = sb.toString()
+    }
+
+    private fun openWriteSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                android.net.Uri.parse("package:$packageName")))
+        } catch (e: Exception) { toast("Không mở được trang cấp quyền") }
+    }
+
+    private fun enableGuard() {
+        tvLog.text = "Đang bật tự động giữ...\n"
+        thread {
+            // Có sẵn ADB/Shizuku thì cấp quyền ghi cài đặt bảo mật (bền hơn, giữ sau khi tắt gỡ lỗi USB)
+            if (!Guard.hasSecure(this) && (shizukuAlive() || AdbBackend.isConnected(this))) {
+                val run = backend()
+                run?.invoke("pm grant $packageName android.permission.WRITE_SECURE_SETTINGS")
+            }
+            // Không có ADB: dùng quyền "Sửa đổi cài đặt hệ thống"
+            if (!Guard.canWrite(this)) {
+                runOnUiThread { openWriteSettings() }
+                log("Cần bật quyền \"Sửa đổi cài đặt hệ thống\" cho HH tool.\n" +
+                        "Đã mở trang cấp quyền: bật xong thì quay lại bấm BẬT TỰ ĐỘNG GIỮ lần nữa.\n" +
+                        "(Không cần bật gỡ lỗi USB.)")
+                return@thread
+            }
+            if (!Guard.applyMillet(this)) {
+                log("Có quyền nhưng không ghi được MILLET_NO_RESTRICT_APP.\n" +
+                        "Có thể HyperOS chặn ghi khóa này bằng quyền thường. " +
+                        "Hãy cấp WRITE_SECURE_SETTINGS qua ADB/Shizuku một lần.")
+                return@thread
+            }
+            prefs.edit().putBoolean("guard_on", true).apply()
+            Guard.fire(this)
+            runOnUiThread { startGuard() }
+            val mode = if (Guard.hasSecure(this)) "WRITE_SECURE_SETTINGS" else "Sửa đổi cài đặt hệ thống"
+            log("✅ Đã bật tự động giữ (quyền: $mode).\n" +
+                    "• Ghi Millet no-restrict cho Google + app đã ghim + HH tool\n" +
+                    "• Bị ghi đè hoặc bật màn hình sẽ tự ghi lại và đá FCM\n" +
+                    "• Tự chạy lại sau khi khởi động máy\n\n" +
+                    "Nên đặt HH tool ở chế độ pin Không giới hạn.")
+        }
+    }
+
+    private fun disableGuard() {
+        prefs.edit().putBoolean("guard_on", false).apply()
+        stopService(Intent(this, GuardService::class.java))
+        tvLog.text = "Đã tắt tự động giữ."
+    }
+
+    // ---------- Millet / FCM ----------
+    private val GMS = "com.google.android.gms"
+
+    /** Thêm các gói vào danh sách MILLET_NO_RESTRICT_APP (HyperOS/MIUI), giữ nguyên các gói đã có. */
+    private fun milletScript(pkgs: List<String>): String =
+        "cur=\$(settings --user 0 get system MILLET_NO_RESTRICT_APP); " +
+        "[ \"\$cur\" = null ] && cur=''; " +
+        "for p in ${pkgs.joinToString(" ")}; do " +
+        "case \",\$cur,\" in *\",\$p,\"*) ;; *) cur=\"\${cur:+\$cur,}\$p\";; esac; done; " +
+        "settings --user 0 put system MILLET_NO_RESTRICT_APP \"\$cur\"; " +
+        "echo \"MILLET_NO_RESTRICT_APP=\$(settings --user 0 get system MILLET_NO_RESTRICT_APP)\""
+
+    private fun fcmScript(pkg: String?): String {
+        val c = mutableListOf(
+            "am broadcast -a com.google.android.intent.action.GTALK_HEARTBEAT -p $GMS",
+            "am broadcast -a com.google.android.intent.action.MCS_HEARTBEAT -p $GMS",
+            "dumpsys deviceidle whitelist +$GMS",
+            "cmd appops set $GMS RUN_IN_BACKGROUND allow",
+            "cmd appops set $GMS RUN_ANY_IN_BACKGROUND allow",
+            "am set-standby-bucket $GMS active"
+        )
+        if (pkg != null) {
+            c += "am set-standby-bucket $pkg active"
+            c += "cmd package set-stopped-state --user 0 $pkg false"
+        }
+        return c.joinToString("; ") { "$it >/dev/null 2>&1" } +
+                "; " + milletScript(listOfNotNull(pkg) + Guard.DEFAULT + packageName)
+    }
+
+    private fun milletOnly(app: AppItem) {
+        tvLog.text = "Đang ghi Millet cho ${app.label}...\n"
+        thread {
+            val run = backend() ?: return@thread
+            val out = run(milletScript(listOf(app.pkg) + Guard.DEFAULT + packageName)).trim()
+            log("🛡 Millet: ${app.label}\n$out\n\n" +
+                    "Lưu ý: PowerKeeper có thể ghi đè danh sách này. Nếu mất, bấm lại.")
+        }
+    }
+
+    private fun kickFcm(pkg: String?) {
+        tvLog.text = "Đang đánh thức FCM...\n"
+        thread {
+            val run = backend() ?: return@thread
+            val out = run(fcmScript(pkg)).trim()
+            log("📡 Đã đánh thức FCM (Google Play services" +
+                    (if (pkg != null) " + $pkg" else "") + ")\n$out")
         }
     }
 
@@ -339,8 +506,97 @@ class MainActivity : Activity() {
             val ch = run("CLASSPATH=$packageCodePath app_process /system/bin " +
                     "com.example.granter.ChannelFixer $pkg $uid 2>&1").trim()
 
-            log("✅ ${app.label}: $ok/${cmds.size} lệnh OK\n🔔 ${ch.take(200)}\n\n" +
+            val ml = run(milletScript(listOf(pkg) + Guard.DEFAULT + packageName)).trim()
+
+            log("✅ ${app.label}: $ok/${cmds.size} lệnh OK\n🔔 ${ch.take(200)}\n🛡 ${ml.take(200)}\n\n" +
                     "Lệnh bị bỏ qua (bình thường nếu quyền không áp dụng):\n$sb")
+        }
+    }
+
+    // ---------- Sửa hàng loạt: mạng xã hội + ngân hàng ----------
+    private fun isSocial(a: AppItem) =
+        a.category == ApplicationInfo.CATEGORY_SOCIAL || a.pkg in socialPkgs
+
+    private fun isBank(a: AppItem) =
+        bankKeys.any { a.pkg.lowercase().contains(it) || a.label.lowercase().contains(it) }
+
+    private fun fixTargets(): List<AppItem> = all.filter {
+        it.pkg != packageName && (!it.system || it.pkg in socialPkgs) && (isSocial(it) || isBank(it))
+    }
+
+    /** Android đã ghi nhận app "không tối ưu pin" (whitelist) chưa. */
+    private fun batteryFree(pkg: String): Boolean = try {
+        (getSystemService(POWER_SERVICE) as android.os.PowerManager).isIgnoringBatteryOptimizations(pkg)
+    } catch (e: Throwable) { false }
+
+    /** Quyền tự khởi chạy kiểu Xiaomi: 1 = cho phép, 0 = chặn, -1 = không đọc được. */
+    private fun autoStartOk(pkg: String): Int = try {
+        val ops = getSystemService(APP_OPS_SERVICE) as android.app.AppOpsManager
+        val uid = packageManager.getApplicationInfo(pkg, 0).uid
+        val m = android.app.AppOpsManager::class.java.getMethod("checkOpNoThrow",
+            Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, String::class.java)
+        if ((m.invoke(ops, 10008, uid, pkg) as Int) == 0) 1 else 0
+    } catch (e: Throwable) { -1 }
+
+    private fun confirmFixAll() {
+        val n = fixTargets().size
+        if (n == 0) { toast("Không thấy ứng dụng mạng xã hội / ngân hàng nào"); return }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Sửa tất cả")
+            .setMessage("Sẽ cấp toàn bộ quyền (giống nút CẤP QUYỀN) cho $n ứng dụng mạng xã hội + ngân hàng, sửa thông báo, rồi bật tự động giữ Millet + FCM. Tiếp tục?")
+            .setPositiveButton("Sửa") { _, _ -> fixAll() }
+            .setNegativeButton("Hủy", null)
+            .show()
+    }
+
+    /** Chạy đúng bộ lệnh của nút CẤP QUYỀN cho từng app trong danh sách. */
+    private fun fixAll() {
+        val targets = fixTargets()
+        tvLog.text = "Đang sửa ${targets.size} ứng dụng...\n"
+        thread {
+            val run = backend() ?: return@thread
+            val done = StringBuilder()
+            targets.forEachIndexed { i, app ->
+                log("Đang sửa ${i + 1}/${targets.size}: ${app.label}\n\n$done")
+                val pkg = app.pkg
+                // Y hệt nút CẤP QUYỀN từng app
+                val cmds = mutableListOf<String>()
+                try {
+                    packageManager.getPackageInfo(pkg, PackageManager.GET_PERMISSIONS)
+                        .requestedPermissions?.forEach { cmds += "pm grant $pkg $it" }
+                } catch (e: Throwable) {}
+                appOps.forEach { cmds += "appops set $pkg $it allow" }
+                cmds += "dumpsys deviceidle whitelist +$pkg"
+                cmds += "cmd deviceidle whitelist +$pkg"
+                cmds += "am set-standby-bucket $pkg active"
+                cmds += "cmd package set-stopped-state --user 0 $pkg false"
+                run(cmds.joinToString("; ") { "$it >/dev/null 2>&1" })
+                try {
+                    val uid = packageManager.getApplicationInfo(pkg, 0).uid
+                    run("CLASSPATH=$packageCodePath app_process /system/bin " +
+                            "com.example.granter.ChannelFixer $pkg $uid 2>&1")
+                } catch (e: Throwable) {}
+                val bat = if (batteryFree(pkg)) "✔" else "✘"
+                val au = when (autoStartOk(pkg)) { 1 -> "✔"; 0 -> "✘"; else -> "?" }
+                done.append("${app.label}  | pin: $bat  | tự khởi chạy: $au\n")
+            }
+            val pkgs = targets.map { it.pkg }
+            val ml = run(milletScript(pkgs + Guard.DEFAULT + packageName)).trim()
+            val fixed = prefs.getStringSet("fixed", emptySet())!!.toMutableSet()
+            fixed.addAll(pkgs)
+            prefs.edit().putStringSet("fixed", fixed).apply()
+            // Bật luôn tự động giữ (giống nút BẬT TỰ ĐỘNG GIỮ)
+            if (!Guard.canWrite(this)) run("pm grant $packageName android.permission.WRITE_SECURE_SETTINGS")
+            val guardOn = Guard.canWrite(this)
+            if (guardOn) {
+                prefs.edit().putBoolean("guard_on", true).apply()
+                Guard.fire(this)
+                runOnUiThread { startGuard() }
+            }
+            log("✅ Đã sửa ${targets.size} ứng dụng\n🛡 ${ml.take(200)}\n" +
+                    (if (guardOn) "🔒 Đã bật tự động giữ Millet + FCM\n\n"
+                    else "⚠ Chưa bật được tự động giữ (thiếu quyền ghi cài đặt hệ thống). Kết nối ADB rồi bấm BẬT TỰ ĐỘNG GIỮ.\n\n") +
+                    done)
         }
     }
 

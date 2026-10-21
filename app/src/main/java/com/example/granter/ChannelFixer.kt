@@ -21,7 +21,7 @@ object ChannelFixer {
             try {
                 cls.getMethod("setNotificationsEnabledForPackage", String::class.java, i, b)
                     .invoke(nm, pkg, uid, true)
-            } catch (_: Throwable) {}
+            } catch (ignored: Throwable) {}
             val slice = cls.getMethod("getNotificationChannelsForPackage", String::class.java, i, b)
                 .invoke(nm, pkg, uid, false)
             val list = slice!!.javaClass.getMethod("getList").invoke(slice) as List<*>
