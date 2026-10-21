@@ -46,10 +46,10 @@ class MainActivity : Activity() {
         else -> true
     }
 
-    private val BG = Color.parseColor("#DCEBFF")
-    private val BLUE = Color.parseColor("#1E88E5")
-    private val BAR = Color.parseColor("#90CAF9")
-    private val DARK = Color.parseColor("#0D47A1")
+    private val BG = Color.parseColor("#FCE4EC")
+    private val BLUE = Color.parseColor("#EC407A")
+    private val BAR = Color.parseColor("#F48FB1")
+    private val DARK = Color.parseColor("#AD1457")
 
     private var selected: AppItem? = null
     private lateinit var tvSelected: TextView
@@ -100,11 +100,23 @@ class MainActivity : Activity() {
             addView(TextView(context).apply {
                 text = label; textSize = 11f; setTextColor(DARK)
                 gravity = android.view.Gravity.CENTER
-                maxLines = 2
+                maxLines = 3
                 setPadding(0, dp(6), 0, 0)
             })
             setOnClickListener { onClick() }
         }
+
+    /** Hộp thoại bo góc, nền hồng, chữ/nút cùng tông với giao diện. */
+    private fun styleDialog(d: android.app.AlertDialog) {
+        d.window?.setBackgroundDrawable(shape(BG, false).apply { cornerRadius = dp(24).toFloat() })
+        d.findViewById<TextView>(android.R.id.message)?.setTextColor(DARK)
+        val tid = resources.getIdentifier("alertTitle", "id", "android")
+        if (tid != 0) d.findViewById<TextView>(tid)?.setTextColor(DARK)
+        listOf(android.content.DialogInterface.BUTTON_POSITIVE,
+            android.content.DialogInterface.BUTTON_NEGATIVE).forEach {
+            d.getButton(it)?.setTextColor(BLUE)
+        }
+    }
 
     private fun circleRow(vararg items: View) = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
@@ -148,7 +160,7 @@ class MainActivity : Activity() {
             addView(circleRow(
                 circleButton("📡", "Kiểm tra FCM") { FcmCheck.open(this@MainActivity) },
                 circleButton("📋", "Xem Millet") { showMillet() },
-                circleButton("🛠", "Sửa tất cả") { confirmFixAll() }))
+                circleButton("⚡", "Cấp full quyền chỉ với 1 nhấn") { confirmFixAll() }))
         }
 
         tvLog = TextView(this).apply { setTextColor(DARK) }
@@ -166,7 +178,7 @@ class MainActivity : Activity() {
         val chips = mutableListOf<Pair<String, Button>>()
         var refreshList: () -> Unit = {}
         fun paintChips() = chips.forEach { (m, b) ->
-            b.background = shape(if (m == mode) DARK else Color.parseColor("#64B5F6"), false)
+            b.background = shape(if (m == mode) DARK else Color.parseColor("#F06292"), false)
         }
         val chipBar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         listOf("user" to "Của tôi", "social" to "Mạng xã hội",
@@ -207,7 +219,10 @@ class MainActivity : Activity() {
                 override fun getView(p: Int, v: View?, g: ViewGroup): View {
                     val view = v ?: layoutInflater.inflate(
                         android.R.layout.simple_list_item_2, g, false)
-                    view.findViewById<TextView>(android.R.id.text1).text = items[p].label
+                    view.findViewById<TextView>(android.R.id.text1).apply {
+                        text = items[p].label
+                        setTextColor(Color.parseColor("#E53935"))
+                    }
                     view.findViewById<TextView>(android.R.id.text2).text = items[p].pkg
                     return view
                 }
@@ -567,11 +582,11 @@ class MainActivity : Activity() {
         val n = fixTargets().size
         if (n == 0) { toast("Không thấy ứng dụng mạng xã hội / ngân hàng nào"); return }
         android.app.AlertDialog.Builder(this)
-            .setTitle("Sửa tất cả")
+            .setTitle("Cấp full quyền")
             .setMessage("Sẽ cấp toàn bộ quyền (giống nút CẤP QUYỀN) cho $n ứng dụng mạng xã hội + ngân hàng, sửa thông báo, rồi bật tự động giữ Millet + FCM. Tiếp tục?")
-            .setPositiveButton("Sửa") { _, _ -> fixAll() }
+            .setPositiveButton("Cấp") { _, _ -> fixAll() }
             .setNegativeButton("Hủy", null)
-            .show()
+            .show().also { styleDialog(it) }
     }
 
     /** Chạy đúng bộ lệnh của nút CẤP QUYỀN cho từng app trong danh sách. */
