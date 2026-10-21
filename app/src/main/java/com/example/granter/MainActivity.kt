@@ -347,3 +347,4 @@ class MainActivity : Activity() {
     private fun log(s: String) = runOnUiThread { tvLog.text = s }
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
 }
+// test
