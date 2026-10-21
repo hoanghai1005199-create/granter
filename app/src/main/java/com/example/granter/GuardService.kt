@@ -17,7 +17,7 @@ import android.os.Looper
 import android.provider.Settings
 import kotlin.concurrent.thread
 
-/** Chạy nền: khi PowerKeeper ghi đè danh sách Millet hoặc bật màn hình thì ghi lại + đá FCM. */
+/** Chạy nền: chỉ soi danh sách Millet, khi PowerKeeper ghi đè thì ghi lại + đá FCM. Không nghe bật/mở khóa màn hình. */
 class GuardService : Service() {
 
     private val h = Handler(Looper.getMainLooper())
@@ -27,11 +27,10 @@ class GuardService : Service() {
             thread {
                 if (License.refresh(applicationContext) != License.State.ACTIVE || !Gate.ok(applicationContext)) h.post { stopSelf() }
             }
-            h.postDelayed(this, 30 * 60 * 1000L)
+            h.postDelayed(this, 6 * 60 * 60 * 1000L)
         }
     }
     private var obs: ContentObserver? = null
-    private var rcv: BroadcastReceiver? = null
 
     private fun schedule() {
         h.removeCallbacks(task)
@@ -49,14 +48,6 @@ class GuardService : Service() {
         try {
             contentResolver.registerContentObserver(Settings.System.getUriFor(Guard.KEY), false, o)
         } catch (e: Throwable) {}
-        val r = object : BroadcastReceiver() {
-            override fun onReceive(c: Context, i: Intent) { schedule() }
-        }
-        rcv = r
-        val f = IntentFilter(Intent.ACTION_SCREEN_ON)
-        f.addAction(Intent.ACTION_USER_PRESENT)
-        if (Build.VERSION.SDK_INT >= 33) registerReceiver(r, f, Context.RECEIVER_NOT_EXPORTED)
-        else registerReceiver(r, f)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -84,7 +75,6 @@ class GuardService : Service() {
         h.removeCallbacks(task)
         h.removeCallbacks(licTask)
         try { obs?.let { contentResolver.unregisterContentObserver(it) } } catch (e: Throwable) {}
-        try { rcv?.let { unregisterReceiver(it) } } catch (e: Throwable) {}
         super.onDestroy()
     }
 }
