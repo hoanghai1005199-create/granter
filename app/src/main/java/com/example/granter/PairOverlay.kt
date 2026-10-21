@@ -73,6 +73,17 @@ object PairOverlay {
             filters = arrayOf<InputFilter>(InputFilter.LengthFilter(6))
         }
         card.addView(input)
+        card.addView(TextView(c).apply {
+            text = "Cổng (phải khớp dòng IP address & Port trong hộp Cài đặt)"
+            textSize = 12f; setTextColor(dark)
+        })
+        val portInput = EditText(c).apply {
+            setText(port.toString()); textSize = 18f; gravity = Gravity.CENTER
+            setTextColor(dark)
+            inputType = InputType.TYPE_CLASS_NUMBER
+            filters = arrayOf<InputFilter>(InputFilter.LengthFilter(5))
+        }
+        card.addView(portInput)
 
         val row = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL }
         val cancel = Button(c).apply {
@@ -87,13 +98,16 @@ object PairOverlay {
             layoutParams = LinearLayout.LayoutParams(0, dp(44), 1f).apply { setMargins(dp(6), dp(8), 0, 0) }
             setOnClickListener {
                 val code = input.text.toString().trim()
+                val p = portInput.text.toString().trim().toIntOrNull()
                 if (code.length != 6) {
                     input.error = "Cần đủ 6 số"
+                } else if (p == null || p < 1024) {
+                    portInput.error = "Nhập cổng đúng"
                 } else {
                     dismiss(c)
                     Notif.show(c, "Đang ghép nối...")
                     thread {
-                        val paired = AdbBackend.pair(c, host, port, code)
+                        val paired = AdbBackend.pair(c, host, p, code)
                         if (!paired) {
                             Notif.show(c, "Ghép nối thất bại: ${AdbBackend.lastError.take(80)}. Thử lại.")
                         } else {
