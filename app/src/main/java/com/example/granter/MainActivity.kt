@@ -125,7 +125,7 @@ class MainActivity : Activity() {
             .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
 
         val row6 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row6.addView(blueButton("SỬA TẤT CẢ MẠNG XÃ HỘI + NGÂN HÀNG") { confirmFixAll() }
+        row6.addView(blueButton("SỬA TẤT CẢ + BẬT TỰ ĐỘNG GIỮ") { confirmFixAll() }
             .apply { layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
 
         tvLog = TextView(this).apply { setTextColor(DARK) }
@@ -482,7 +482,7 @@ class MainActivity : Activity() {
         if (n == 0) { toast("Không thấy ứng dụng mạng xã hội / ngân hàng nào"); return }
         android.app.AlertDialog.Builder(this)
             .setTitle("Sửa tất cả")
-            .setMessage("Sẽ sửa thông báo và chạy nền cho $n ứng dụng mạng xã hội + ngân hàng trên máy. Tiếp tục?")
+            .setMessage("Sẽ sửa thông báo và chạy nền cho $n ứng dụng mạng xã hội + ngân hàng, rồi bật tự động giữ Millet + FCM. Tiếp tục?")
             .setPositiveButton("Sửa") { _, _ -> fixAll() }
             .setNegativeButton("Hủy", null)
             .show()
@@ -517,8 +517,18 @@ class MainActivity : Activity() {
             val fixed = prefs.getStringSet("fixed", emptySet())!!.toMutableSet()
             fixed.addAll(pkgs)
             prefs.edit().putStringSet("fixed", fixed).apply()
-            log("✅ Đã sửa ${targets.size} ứng dụng\n🛡 ${ml.take(200)}\n\n" +
-                    "Bật TỰ ĐỘNG GIỮ để các app này luôn nằm trong danh sách Millet.\n\n$done")
+            // Bật luôn tự động giữ (giống nút BẬT TỰ ĐỘNG GIỮ)
+            if (!Guard.canWrite(this)) run("pm grant $packageName android.permission.WRITE_SECURE_SETTINGS")
+            val guardOn = Guard.canWrite(this)
+            if (guardOn) {
+                prefs.edit().putBoolean("guard_on", true).apply()
+                Guard.fire(this)
+                runOnUiThread { startGuard() }
+            }
+            log("✅ Đã sửa ${targets.size} ứng dụng\n🛡 ${ml.take(200)}\n" +
+                    (if (guardOn) "🔒 Đã bật tự động giữ Millet + FCM\n\n"
+                    else "⚠ Chưa bật được tự động giữ (thiếu quyền ghi cài đặt hệ thống). Kết nối ADB rồi bấm BẬT TỰ ĐỘNG GIỮ.\n\n") +
+                    done)
         }
     }
 
