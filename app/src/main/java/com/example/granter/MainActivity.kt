@@ -186,7 +186,7 @@ class MainActivity : Activity() {
     }
 
     // ---------- Trạng thái / backend ----------
-    private fun shizukuAlive(): Boolean = try { Shizuku.pingBinder() } catch (_: Throwable) { false }
+    private fun shizukuAlive(): Boolean = try { Shizuku.pingBinder() } catch (ignored: Throwable) { false }
 
     private fun updateStatus() {
         thread {
@@ -278,13 +278,13 @@ class MainActivity : Activity() {
         } catch (e: Exception) { log("Không dò được: ${e.message}") }
         try {
             startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS))
-        } catch (_: Exception) {}
+        } catch (ignored: Exception) {}
     }
 
     private fun stopDiscovery() {
         val l = nsdListener ?: return
         nsdListener = null
-        try { (getSystemService(NSD_SERVICE) as NsdManager).stopServiceDiscovery(l) } catch (_: Exception) {}
+        try { (getSystemService(NSD_SERVICE) as NsdManager).stopServiceDiscovery(l) } catch (ignored: Exception) {}
     }
 
     // ---------- Ghim ----------
