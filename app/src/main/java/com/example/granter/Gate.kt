@@ -32,6 +32,26 @@ object Gate {
         if ((m.invoke(ops, 10008, uid, ctx.packageName) as Int) == 0) 1 else 0
     } catch (e: Throwable) { -1 }
 
+    /** Tối ưu hóa MIUI/HyperOS (công tắc "Turn on system optimization"): 1 = bật, 0 = tắt, -1 = không đọc được (không chặn). */
+    fun miuiOptimization(ctx: Context): Int {
+        val key = "persist.sys.miui_optimization"
+        var v = try {
+            Class.forName("android.os.SystemProperties")
+                .getMethod("get", String::class.java, String::class.java)
+                .invoke(null, key, "") as String
+        } catch (e: Throwable) { "" }
+        if (v.isBlank()) v = try {
+            Runtime.getRuntime().exec(arrayOf("getprop", key))
+                .inputStream.bufferedReader().readText().trim()
+        } catch (e: Throwable) { "" }
+        return when (v.trim().lowercase()) {
+            "true", "1" -> 1
+            "false", "0" -> 0
+            else -> -1
+        }
+    }
+
     fun ok(ctx: Context): Boolean =
-        installedConflicts(ctx).isEmpty() && batteryFree(ctx) && autoStart(ctx) != 0
+        installedConflicts(ctx).isEmpty() && batteryFree(ctx) && autoStart(ctx) != 0 &&
+            miuiOptimization(ctx) != 0
 }

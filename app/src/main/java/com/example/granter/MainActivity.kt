@@ -350,7 +350,8 @@ class MainActivity : Activity() {
         val bad = Gate.installedConflicts(this)
         val needBattery = !Gate.batteryFree(this)
         val needAuto = Gate.autoStart(this) == 0
-        if (bad.isEmpty() && !needBattery && !needAuto) return true
+        val needOpt = Gate.miuiOptimization(this) == 0
+        if (bad.isEmpty() && !needBattery && !needAuto && !needOpt) return true
 
         try { stopService(Intent(this, GuardService::class.java)) } catch (ignored: Throwable) {}
         if (bad.isNotEmpty()) {
@@ -365,10 +366,12 @@ class MainActivity : Activity() {
         val sb = StringBuilder("HH tool chỉ chạy khi:\n")
         if (needBattery) sb.append("• Tiết kiệm pin: đặt \"Không hạn chế\"\n")
         if (needAuto) sb.append("• Tự khởi động: bật\n")
+        if (needOpt) sb.append("• Tùy chọn nhà phát triển: bật \"Turn on system optimization\" (rồi khởi động lại máy)\n")
         sb.append("\nBật xong quay lại app, hộp thoại này sẽ tự biến mất.")
         val acts = mutableListOf<Pair<String, () -> Unit>>()
         if (needBattery) acts.add("Cài đặt pin" to { openPowerSettings() })
         if (needAuto) acts.add("Tự khởi động" to { openAutoStartSettings() })
+        if (needOpt) acts.add("Tùy chọn NPT" to { tryStart(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)) })
         showGate("Cần bật quyền để dùng HH tool", sb.toString(), acts[0], acts.getOrNull(1))
         return false
     }
