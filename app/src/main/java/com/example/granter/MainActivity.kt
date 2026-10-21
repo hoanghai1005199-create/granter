@@ -477,6 +477,20 @@ class MainActivity : Activity() {
         it.pkg != packageName && (!it.system || it.pkg in socialPkgs) && (isSocial(it) || isBank(it))
     }
 
+    /** Android đã ghi nhận app "không tối ưu pin" (whitelist) chưa. */
+    private fun batteryFree(pkg: String): Boolean = try {
+        (getSystemService(POWER_SERVICE) as android.os.PowerManager).isIgnoringBatteryOptimizations(pkg)
+    } catch (e: Throwable) { false }
+
+    /** Quyền tự khởi chạy kiểu Xiaomi: 1 = cho phép, 0 = chặn, -1 = không đọc được. */
+    private fun autoStartOk(pkg: String): Int = try {
+        val ops = getSystemService(APP_OPS_SERVICE) as android.app.AppOpsManager
+        val uid = packageManager.getApplicationInfo(pkg, 0).uid
+        val m = android.app.AppOpsManager::class.java.getMethod("checkOpNoThrow",
+            Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, String::class.java)
+        if ((m.invoke(ops, 10008, uid, pkg) as Int) == 0) 1 else 0
+    } catch (e: Throwable) { -1 }
+
     private fun confirmFixAll() {
         val n = fixTargets().size
         if (n == 0) { toast("Không thấy ứng dụng mạng xã hội / ngân hàng nào"); return }
@@ -506,6 +520,8 @@ class MainActivity : Activity() {
                 } catch (e: Throwable) {}
                 appOps.forEach { cmds += "appops set $pkg $it allow" }
                 cmds += "dumpsys deviceidle whitelist +$pkg"
+                cmds += "cmd deviceidle whitelist +$pkg"
+                cmds += "am set-standby-bucket $pkg active"
                 cmds += "cmd package set-stopped-state --user 0 $pkg false"
                 run(cmds.joinToString("; ") { "$it >/dev/null 2>&1" })
                 try {
@@ -513,7 +529,9 @@ class MainActivity : Activity() {
                     run("CLASSPATH=$packageCodePath app_process /system/bin " +
                             "com.example.granter.ChannelFixer $pkg $uid 2>&1")
                 } catch (e: Throwable) {}
-                done.append("✓ ${app.label}\n")
+                val bat = if (batteryFree(pkg)) "✔" else "✘"
+                val au = when (autoStartOk(pkg)) { 1 -> "✔"; 0 -> "✘"; else -> "?" }
+                done.append("${app.label}  | pin: $bat  | tự khởi chạy: $au\n")
             }
             val pkgs = targets.map { it.pkg }
             val ml = run(milletScript(pkgs + Guard.DEFAULT + packageName)).trim()
