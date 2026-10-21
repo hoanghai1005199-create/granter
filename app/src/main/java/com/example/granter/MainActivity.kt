@@ -482,13 +482,13 @@ class MainActivity : Activity() {
         if (n == 0) { toast("Không thấy ứng dụng mạng xã hội / ngân hàng nào"); return }
         android.app.AlertDialog.Builder(this)
             .setTitle("Sửa tất cả")
-            .setMessage("Sẽ sửa thông báo và chạy nền cho $n ứng dụng mạng xã hội + ngân hàng, rồi bật tự động giữ Millet + FCM. Tiếp tục?")
+            .setMessage("Sẽ cấp toàn bộ quyền (giống nút CẤP QUYỀN) cho $n ứng dụng mạng xã hội + ngân hàng, sửa thông báo, rồi bật tự động giữ Millet + FCM. Tiếp tục?")
             .setPositiveButton("Sửa") { _, _ -> fixAll() }
             .setNegativeButton("Hủy", null)
             .show()
     }
 
-    /** Bản "nhẹ": chỉ những gì liên quan thông báo / chạy nền, không cấp quyền SMS, vị trí, danh bạ... */
+    /** Chạy đúng bộ lệnh của nút CẤP QUYỀN cho từng app trong danh sách. */
     private fun fixAll() {
         val targets = fixTargets()
         tvLog.text = "Đang sửa ${targets.size} ứng dụng...\n"
@@ -498,10 +498,13 @@ class MainActivity : Activity() {
             targets.forEachIndexed { i, app ->
                 log("Đang sửa ${i + 1}/${targets.size}: ${app.label}\n\n$done")
                 val pkg = app.pkg
-                val cmds = mutableListOf("pm grant $pkg android.permission.POST_NOTIFICATIONS")
-                listOf("RUN_IN_BACKGROUND", "RUN_ANY_IN_BACKGROUND", "POST_NOTIFICATION",
-                    "USE_FULL_SCREEN_INTENT", "SCHEDULE_EXACT_ALARM", "10008")
-                    .forEach { cmds += "appops set $pkg $it allow" }
+                // Y hệt nút CẤP QUYỀN từng app
+                val cmds = mutableListOf<String>()
+                try {
+                    packageManager.getPackageInfo(pkg, PackageManager.GET_PERMISSIONS)
+                        .requestedPermissions?.forEach { cmds += "pm grant $pkg $it" }
+                } catch (e: Throwable) {}
+                appOps.forEach { cmds += "appops set $pkg $it allow" }
                 cmds += "dumpsys deviceidle whitelist +$pkg"
                 cmds += "cmd package set-stopped-state --user 0 $pkg false"
                 run(cmds.joinToString("; ") { "$it >/dev/null 2>&1" })
