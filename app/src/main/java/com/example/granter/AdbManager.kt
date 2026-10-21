@@ -47,8 +47,8 @@ class AdbManager(ctx: Context) : AbsAdbConnectionManager() {
             keyFile.writeBytes(k.encoded)
             certFile.writeBytes(c.encoded)
         }
-        mKey = k
-        mCert = c
+        mKey = k!!
+        mCert = c!!
         // Conscrypt cần cho ghép nối (TLS key export). Chèn sau khi tạo khóa xong.
         if (Security.getProvider("Conscrypt") == null) {
             Security.insertProviderAt(Conscrypt.newProvider(), 1)
