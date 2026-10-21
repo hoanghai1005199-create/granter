@@ -280,6 +280,8 @@ class MainActivity : Activity() {
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
         })
         refreshPinned()
+        // Mở app là tự bật "Tự động giữ" (chỉ lần mở mới, không chạy lại khi xoay màn hình)
+        if (savedInstanceState == null) enableGuard(auto = true)
     }
 
     private fun goLock() {
@@ -520,7 +522,7 @@ class MainActivity : Activity() {
         } catch (e: Exception) { toast("Không mở được trang cấp quyền") }
     }
 
-    private fun enableGuard() {
+    private fun enableGuard(auto: Boolean = false) {
         tvLog.text = "Đang bật tự động giữ...\n"
         thread {
             // Có sẵn ADB/Shizuku thì cấp quyền ghi cài đặt bảo mật (bền hơn, giữ sau khi tắt gỡ lỗi USB)
@@ -530,6 +532,11 @@ class MainActivity : Activity() {
             }
             // Không có ADB: dùng quyền "Sửa đổi cài đặt hệ thống"
             if (!Guard.canWrite(this) && !HhServer.ping(this)) {
+                if (auto) {
+                    log("Tự động giữ chưa bật được: thiếu quyền \"Sửa đổi cài đặt hệ thống\".\n" +
+                            "Bấm 🔒 Bật tự động giữ một lần để cấp quyền, từ sau mở app là tự chạy.")
+                    return@thread
+                }
                 runOnUiThread { openWriteSettings() }
                 log("Cần bật quyền \"Sửa đổi cài đặt hệ thống\" cho HH tool.\n" +
                         "Đã mở trang cấp quyền: bật xong thì quay lại bấm BẬT TỰ ĐỘNG GIỮ lần nữa.\n" +
