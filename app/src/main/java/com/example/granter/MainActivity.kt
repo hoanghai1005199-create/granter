@@ -280,8 +280,6 @@ class MainActivity : Activity() {
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
         })
         refreshPinned()
-        // Mở app là tự bật "Tự động giữ" (chỉ lần mở mới, không chạy lại khi xoay màn hình)
-        if (savedInstanceState == null) enableGuard(auto = true)
     }
 
     private fun goLock() {
@@ -293,11 +291,86 @@ class MainActivity : Activity() {
         super.onResume()
         if (isFinishing) return
         if (License.local(this) != License.State.ACTIVE) { goLock(); return }
+        if (!checkGate()) return
         thread {
             if (License.refreshIfDue(applicationContext) != License.State.ACTIVE) runOnUiThread { goLock() }
         }
         updateStatus()
         if (prefs.getBoolean("guard_on", false) && Guard.canWrite(this)) startGuard()
+        // Mở app là tự bật "Tự động giữ" (một lần cho mỗi lần mở, sau khi qua cổng điều kiện)
+        if (!autoRan) { autoRan = true; enableGuard(auto = true) }
+    }
+
+    // ---------- Cổng điều kiện chạy ----------
+    private var gateDialog: android.app.AlertDialog? = null
+    private var autoRan = false
+
+    private fun appLabel(pkg: String): String = try {
+        packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+    } catch (e: Throwable) { pkg }
+
+    private fun tryStart(vararg intents: Intent) {
+        for (i in intents) {
+            try { startActivity(i); return } catch (ignored: Exception) {}
+        }
+        toast("Không mở được, hãy vào Cài đặt > Ứng dụng > HH tool để chỉnh")
+    }
+
+    private fun openPowerSettings() = tryStart(
+        Intent().setClassName("com.miui.powerkeeper", "com.miui.powerkeeper.ui.HiddenAppsConfigActivity")
+            .putExtra("package_name", packageName).putExtra("package_label", "HH tool"),
+        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:$packageName")))
+
+    private fun openAutoStartSettings() = tryStart(
+        Intent().setClassName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity"),
+        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:$packageName")))
+
+    private fun showGate(title: String, msg: String,
+                         a1: Pair<String, () -> Unit>, a2: Pair<String, () -> Unit>? = null) {
+        val b = android.app.AlertDialog.Builder(this)
+            .setTitle(title).setMessage(msg).setCancelable(false)
+            .setPositiveButton(a1.first, null)
+            .setNegativeButton("Thoát") { _, _ -> finishAffinity() }
+        if (a2 != null) b.setNeutralButton(a2.first, null)
+        val d = b.create()
+        d.show()
+        d.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener { a1.second() }
+        if (a2 != null) {
+            d.getButton(android.content.DialogInterface.BUTTON_NEUTRAL).setOnClickListener { a2.second() }
+        }
+        styleDialog(d)
+        d.getButton(android.content.DialogInterface.BUTTON_NEUTRAL)?.setTextColor(ACCENT_TEXT)
+        gateDialog = d
+    }
+
+    /** true = đủ điều kiện chạy. false = đã hiện hộp thoại chặn và dừng dịch vụ nền. */
+    private fun checkGate(): Boolean {
+        gateDialog?.let { try { it.dismiss() } catch (ignored: Throwable) {} }
+        gateDialog = null
+        val bad = Gate.installedConflicts(this)
+        val needBattery = !Gate.batteryFree(this)
+        val needAuto = Gate.autoStart(this) == 0
+        if (bad.isEmpty() && !needBattery && !needAuto) return true
+
+        try { stopService(Intent(this, GuardService::class.java)) } catch (ignored: Throwable) {}
+        if (bad.isNotEmpty()) {
+            val list = bad.joinToString("\n") { "• ${appLabel(it)} ($it)" }
+            showGate("Cần gỡ ứng dụng xung đột",
+                "Các ứng dụng sau đang cài trên máy. Hãy gỡ chúng rồi mở lại HH tool:\n\n$list",
+                "Gỡ cài đặt" to {
+                    tryStart(Intent(Intent.ACTION_DELETE, android.net.Uri.parse("package:${bad[0]}")))
+                })
+            return false
+        }
+        val sb = StringBuilder("HH tool chỉ chạy khi:\n")
+        if (needBattery) sb.append("• Tiết kiệm pin: đặt \"Không hạn chế\"\n")
+        if (needAuto) sb.append("• Tự khởi động: bật\n")
+        sb.append("\nBật xong quay lại app, hộp thoại này sẽ tự biến mất.")
+        val acts = mutableListOf<Pair<String, () -> Unit>>()
+        if (needBattery) acts.add("Cài đặt pin" to { openPowerSettings() })
+        if (needAuto) acts.add("Tự khởi động" to { openAutoStartSettings() })
+        showGate("Cần bật quyền để dùng HH tool", sb.toString(), acts[0], acts.getOrNull(1))
+        return false
     }
 
     // ---------- Trạng thái / backend ----------
@@ -485,6 +558,7 @@ class MainActivity : Activity() {
 
     // ---------- Tự động giữ ----------
     private fun startGuard() {
+        if (!Gate.ok(this)) return
         try { startForegroundService(Intent(this, GuardService::class.java)) } catch (e: Exception) {}
     }
 

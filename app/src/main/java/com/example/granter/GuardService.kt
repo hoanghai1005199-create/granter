@@ -25,7 +25,7 @@ class GuardService : Service() {
     private val licTask = object : Runnable {
         override fun run() {
             thread {
-                if (License.refresh(applicationContext) != License.State.ACTIVE) h.post { stopSelf() }
+                if (License.refresh(applicationContext) != License.State.ACTIVE || !Gate.ok(applicationContext)) h.post { stopSelf() }
             }
             h.postDelayed(this, 30 * 60 * 1000L)
         }
@@ -73,6 +73,7 @@ class GuardService : Service() {
             startForeground(7, n)
         }
         if (License.local(this) != License.State.ACTIVE) { stopSelf(); return START_NOT_STICKY }
+        if (!Gate.ok(this)) { stopSelf(); return START_NOT_STICKY }
         h.removeCallbacks(licTask)
         h.post(licTask)
         schedule()
