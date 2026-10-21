@@ -44,6 +44,8 @@
             </intent-filter>
         </receiver>
 
+        <activity android:name=".LockActivity" android:exported="false" />
+
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

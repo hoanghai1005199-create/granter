@@ -77,6 +77,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (License.local(this) != License.State.ACTIVE) { goLock(); return }
         window.statusBarColor = BAR
 
         val root = LinearLayout(this).apply {
@@ -193,8 +194,18 @@ class MainActivity : Activity() {
         refreshPinned()
     }
 
+    private fun goLock() {
+        startActivity(Intent(this, LockActivity::class.java))
+        finish()
+    }
+
     override fun onResume() {
         super.onResume()
+        if (isFinishing) return
+        if (License.local(this) != License.State.ACTIVE) { goLock(); return }
+        thread {
+            if (License.refreshIfDue(applicationContext) != License.State.ACTIVE) runOnUiThread { goLock() }
+        }
         updateStatus()
         if (prefs.getBoolean("guard_on", false) && Guard.canWrite(this)) startGuard()
     }

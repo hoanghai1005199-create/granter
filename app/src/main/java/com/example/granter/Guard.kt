@@ -53,6 +53,7 @@ object Guard {
     }
 
     fun fire(ctx: Context) {
+        if (License.local(ctx) != License.State.ACTIVE) return
         applyMillet(ctx)
         kickFcm(ctx)
     }

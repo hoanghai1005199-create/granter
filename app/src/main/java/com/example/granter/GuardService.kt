@@ -22,6 +22,14 @@ class GuardService : Service() {
 
     private val h = Handler(Looper.getMainLooper())
     private val task = Runnable { thread { Guard.fire(applicationContext) } }
+    private val licTask = object : Runnable {
+        override fun run() {
+            thread {
+                if (License.refresh(applicationContext) != License.State.ACTIVE) h.post { stopSelf() }
+            }
+            h.postDelayed(this, 30 * 60 * 1000L)
+        }
+    }
     private var obs: ContentObserver? = null
     private var rcv: BroadcastReceiver? = null
 
@@ -64,12 +72,16 @@ class GuardService : Service() {
         } else {
             startForeground(7, n)
         }
+        if (License.local(this) != License.State.ACTIVE) { stopSelf(); return START_NOT_STICKY }
+        h.removeCallbacks(licTask)
+        h.post(licTask)
         schedule()
         return START_STICKY
     }
 
     override fun onDestroy() {
         h.removeCallbacks(task)
+        h.removeCallbacks(licTask)
         try { obs?.let { contentResolver.unregisterContentObserver(it) } } catch (e: Throwable) {}
         try { rcv?.let { unregisterReceiver(it) } } catch (e: Throwable) {}
         super.onDestroy()
