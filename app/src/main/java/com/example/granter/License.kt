@@ -129,13 +129,41 @@ object License {
         return State.ACTIVE
     }
 
+    // ---------- Tên máy / phiên bản ROM gửi lên bảng ----------
+    private fun sysprop(key: String): String {
+        var v = try {
+            Class.forName("android.os.SystemProperties")
+                .getMethod("get", String::class.java, String::class.java)
+                .invoke(null, key, "") as String
+        } catch (e: Throwable) { "" }
+        if (v.isBlank()) v = try {
+            Runtime.getRuntime().exec(arrayOf("getprop", key))
+                .inputStream.bufferedReader().readText().trim()
+        } catch (e: Throwable) { "" }
+        return v.trim()
+    }
+
+    /** Ví dụ: "Redmi K80 Pro (24122RKC7C)"; không đọc được tên thương mại thì "Xiaomi 24122RKC7C". */
+    fun deviceLabel(): String {
+        val market = listOf("ro.product.marketname", "ro.product.odm.marketname", "ro.product.vendor.marketname")
+            .map { sysprop(it) }.firstOrNull { it.isNotEmpty() }
+        return if (market != null) market + " (" + Build.MODEL + ")" else Build.MANUFACTURER + " " + Build.MODEL
+    }
+
+    /** Ví dụ: "OS2.0.8.0.VOCCNXM · Android 15"; không đọc được thì dùng Build.DISPLAY. */
+    fun romLabel(): String {
+        val ver = listOf("ro.mi.os.version.incremental", "ro.build.version.incremental")
+            .map { sysprop(it) }.firstOrNull { it.isNotEmpty() }
+        return if (ver != null) ver + " · Android " + Build.VERSION.RELEASE else (Build.DISPLAY ?: "")
+    }
+
     // ---------- Hỏi server (gọi ở thread nền) ----------
     fun refresh(c: Context): State {
         val device = deviceCode(c)
         val nonce = newNonce()
         val url = ENDPOINT + "?v=2&key=" + enc(API_KEY) + "&device=" + enc(device) + "&nonce=" + nonce +
-                "&name=" + enc(Build.MANUFACTURER + " " + Build.MODEL) +
-                "&rom=" + enc(Build.DISPLAY ?: "") +
+                "&name=" + enc(deviceLabel()) +
+                "&rom=" + enc(romLabel()) +
                 "&auto=" + autostart(c) + "&bat=" + (if (batteryOk(c)) 1 else 0)
         val body = http(url) ?: return local(c)
         try {
