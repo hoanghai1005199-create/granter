@@ -6,15 +6,17 @@ plugins {
 android {
     namespace = "com.example.granter"
     compileSdk = 34
-    
+    // THÊM DÒNG NÀY: Chỉ định rõ bản NDK cho GitHub Actions
+    ndkVersion = "26.1.10909125" 
+
     defaultConfig {
         applicationId = "com.example.granter"
         minSdk = 21
         targetSdk = 22
         versionCode = 2
-        versionName = "3.0"
+        versionName = "1.1"
 
-        // THÊM ĐOẠN NÀY: Cấu hình NDK
+        // THÊM: Cấu hình NDK
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
         }
@@ -26,11 +28,11 @@ android {
         }
     }
 
-    // THÊM ĐOẠN NÀY: Trỏ đường dẫn tới CMakeLists.txt
+    // THÊM: Đường dẫn CMake
     externalNativeBuild {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1" // Nếu báo lỗi version, hãy vào SDK Manager tải CMake 3.22.1
+            version = "3.22.1"
         }
     }
 
