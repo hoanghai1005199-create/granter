@@ -58,6 +58,7 @@ class MainActivity : Activity() {
     private lateinit var tvSelected: TextView
     private lateinit var tvLog: TextView
     private lateinit var tvStatus: TextView
+    private lateinit var tvHealth: TextView
     private lateinit var pinnedBox: LinearLayout
     private lateinit var all: List<AppItem>
     private val prefs by lazy { getSharedPreferences("granter", MODE_PRIVATE) }
@@ -145,6 +146,9 @@ class MainActivity : Activity() {
         }
 
         tvStatus = TextView(this).apply { textSize = 13f; setTextColor(DARK) }
+        tvHealth = TextView(this).apply {
+            textSize = 12f; setTextColor(DARK); setPadding(0, dp(4), 0, dp(4))
+        }
         pinnedBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val search = EditText(this).apply { hint = "Tìm ứng dụng..." }
         val list = ListView(this).apply { layoutParams = LinearLayout.LayoutParams(-1, 0, 1f) }
@@ -164,6 +168,10 @@ class MainActivity : Activity() {
                 circleButton("📋", "Xem Millet") { showMillet() },
                 circleButton("⚡", "Cấp full quyền chỉ với 1 nhấn") { confirmFixAll() },
                 circleButton("🖥", "Máy chủ shell (bật/tắt)") { toggleServer() }))
+            addView(circleRow(
+                circleButton("❄", "Danh sách freeze") { showFreezeManager() },
+                circleButton("📜", "Nhật ký ghi đè") { showOverrideLog() },
+                circleButton("💾", "Sao lưu / khôi phục") { showBackupMenu() }))
         }
 
         tvLog = TextView(this).apply { setTextColor(DARK) }
@@ -196,6 +204,7 @@ class MainActivity : Activity() {
         }
 
         root.addView(tvStatus)
+        root.addView(tvHealth)
         root.addView(pairBox)
         root.addView(TextView(this).apply {
             text = "Ứng dụng đã cấp (bấm 1 lần để cấp lại, nhấn giữ để bỏ)"; textSize = 14f; setTextColor(DARK)
@@ -403,12 +412,50 @@ class MainActivity : Activity() {
 
     private fun updateStatus() {
         thread {
+            val srv = HhServer.ping(this)
             val txt = if (shizukuAlive()) "Chế độ: Shizuku đang chạy"
-            else if (HhServer.ping(this)) "Chế độ: Máy chủ shell HH tool đang chạy ✅"
+            else if (srv) "Chế độ: Máy chủ shell HH tool đang chạy ✅"
             else "Chế độ: ADB tích hợp (" +
                     (if (AdbBackend.isConnected(this)) "đã kết nối ✅" else "chưa kết nối") + ")"
-            runOnUiThread { tvStatus.text = txt }
+            val health = try { healthText(srv) } catch (e: Throwable) { "" }
+            runOnUiThread { tvStatus.text = txt; tvHealth.text = health }
         }
+    }
+
+    /** Hộp Tình trạng: Millet, freeze (GMS + Zalo), GuardJob, máy chủ shell, lần ghi đè gần nhất. */
+    private fun healthText(serverUp: Boolean): String {
+        val sb = StringBuilder()
+        val raw = try { Settings.System.getString(contentResolver, Guard.KEY) } catch (e: Throwable) { null }
+        val have = (raw ?: "").split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        val miss = Guard.wanted(this).filter { it !in have }
+        sb.append(if (miss.isEmpty()) "Millet: ✅ đủ ${have.size} gói" else "Millet: ⚠ thiếu ${miss.size} gói").append('\n')
+
+        val bad = mutableListOf<String>()
+        var any = false
+        for (t in FreezeStore.TABLES) {
+            val l = FreezeStore.parse(FreezeStore.read(this, t))
+            if (l.isEmpty()) continue
+            any = true
+            val mm = FreezeStore.REQUIRED.filter { it !in l }
+            if (mm.isNotEmpty()) bad += "$t thiếu ${mm.joinToString("/") { it.substringAfterLast('.') }}"
+        }
+        sb.append(when {
+            !any -> "Freeze: (chưa có khóa)"
+            bad.isEmpty() -> "Freeze: ✅ có GMS + Zalo"
+            else -> "Freeze: ⚠ " + bad.joinToString("; ")
+        }).append('\n')
+
+        sb.append("GuardJob: ").append(if (GuardJob.isScheduled(this)) "✅ đã đăng ký" else "❌ chưa đăng ký")
+            .append("  |  Máy chủ shell: ").append(if (serverUp) "✅ chạy" else "❌ tắt").append('\n')
+
+        val log = Guard.overrideLog(this)
+        if (log.isEmpty()) sb.append("Ghi đè: chưa có lần nào")
+        else {
+            val day = log.count { it.first > System.currentTimeMillis() - 24 * 3600_000L }
+            val t = java.text.SimpleDateFormat("HH:mm dd/MM", java.util.Locale.US).format(java.util.Date(log.last().first))
+            sb.append("Ghi đè gần nhất: $t ($day lần/24h)")
+        }
+        return sb.toString()
     }
 
     /** Trả về hàm chạy lệnh shell, hoặc null (đã ghi lý do vào log). Gọi trong thread nền. */
@@ -613,6 +660,9 @@ class MainActivity : Activity() {
             val v = try { get() } catch (e: Throwable) { "(lỗi: ${e.message})" }
             sb.append("• $name: ").append(if (v.isNullOrEmpty()) "(không có)" else v).append("\n")
         }
+        val ex = FreezeStore.extra(this); val xc = FreezeStore.exclude(this)
+        if (ex.isNotEmpty()) sb.append("➕ thêm tay: ").append(ex.sorted().joinToString(", ")).append("\n")
+        if (xc.isNotEmpty()) sb.append("🚫 loại trừ: ").append(xc.sorted().joinToString(", ")).append("\n")
         return sb.toString()
     }
 
@@ -641,6 +691,198 @@ class MainActivity : Activity() {
         sb.append("\n🛡 = gói Granter giữ (mặc định, đã ghim, đã sửa)")
         sb.append(freezerInfo())
         tvLog.text = sb.toString()
+    }
+
+    // ---------- Quản lý danh sách freeze ----------
+    private fun showFreezeManager() {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), 0)
+        }
+        val et = EditText(this).apply {
+            hint = "com.example.app"; setSingleLine(); setTextColor(DARK)
+        }
+        fun title(t: String) = TextView(this).apply {
+            text = t; textSize = 14f; setTextColor(ACCENT_TEXT)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, dp(14), 0, dp(4))
+        }
+        fun section(head: String, items: Set<String>, onRemove: (String) -> Unit) {
+            box.addView(title(head))
+            if (items.isEmpty()) box.addView(TextView(this).apply { text = "(trống)"; setTextColor(DARK) })
+            items.sorted().forEach { p ->
+                box.addView(TextView(this).apply {
+                    text = "✕  $p"; textSize = 14f; setTextColor(DARK)
+                    setPadding(0, dp(8), 0, dp(8))
+                    setOnClickListener { onRemove(p) }
+                })
+            }
+        }
+        fun render() {
+            box.removeAllViews()
+            val extra = FreezeStore.extra(this)
+            val ex = FreezeStore.exclude(this)
+            box.addView(TextView(this).apply {
+                text = "Luôn có: ${FreezeStore.REQUIRED.joinToString(", ")} (không loại trừ được)"
+                textSize = 13f; setTextColor(DARK)
+            })
+            section("Gói thêm tay (luôn nối vào), chạm để bỏ", extra) {
+                FreezeStore.save(this, extra - it, ex); render()
+            }
+            section("Loại trừ (luôn gỡ, không nối lại), chạm để bỏ", ex) {
+                FreezeStore.save(this, extra, ex - it); render()
+            }
+            box.addView(title("Thêm gói"))
+            (et.parent as? ViewGroup)?.removeView(et)
+            box.addView(et)
+        }
+        fun add(toExclude: Boolean) {
+            val p = et.text.toString().trim()
+            if (!FreezeStore.isValid(p)) { toast("Tên gói không hợp lệ"); return }
+            val extra = FreezeStore.extra(this)
+            val ex = FreezeStore.exclude(this)
+            if (toExclude) {
+                if (p in FreezeStore.REQUIRED) { toast("GMS và Zalo bắt buộc giữ"); return }
+                FreezeStore.save(this, extra - p, ex + p)
+            } else {
+                FreezeStore.save(this, extra + p, ex - p)
+            }
+            et.setText(""); render()
+        }
+        render()
+        val btns = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(blueButton("Thêm vào giữ") { add(false) }.apply {
+                layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
+            addView(blueButton("Loại trừ") { add(true) }.apply {
+                layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
+        }
+        val outer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(ScrollView(this@MainActivity).apply {
+                layoutParams = LinearLayout.LayoutParams(-1, 0, 1f); addView(box)
+            })
+            addView(btns)
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Danh sách freeze")
+            .setView(outer)
+            .setPositiveButton("Áp dụng ngay") { _, _ ->
+                tvLog.text = "Đang cập nhật danh sách freeze...\n"
+                thread {
+                    try { Guard.applyFreeze(this) } catch (e: Throwable) {}
+                    log("Đã cập nhật.\n" + freezerInfo())
+                }
+            }
+            .setNegativeButton("Đóng", null)
+            .show().also { styleDialog(it) }
+    }
+
+    // ---------- Nhật ký ghi đè ----------
+    private fun fmtDur(ms: Long): String {
+        val s = ms / 1000
+        return when {
+            s < 60 -> "$s giây"
+            s < 3600 -> "${s / 60} phút"
+            else -> "${s / 3600} giờ ${(s % 3600) / 60} phút"
+        }
+    }
+
+    private fun showOverrideLog() {
+        val log = Guard.overrideLog(this).reversed()
+        val fmt = java.text.SimpleDateFormat("EEE dd/MM HH:mm:ss", java.util.Locale("vi"))
+        val sb = StringBuilder()
+        if (log.isEmpty()) {
+            sb.append("Chưa ghi nhận lần ghi đè nào.\n\nMỗi khi hệ thống ghi đè Millet hoặc danh sách freeze và app nối lại, giờ sẽ được lưu ở đây (cần bật Tự động giữ).")
+        } else {
+            val gaps = log.map { it.first }.sorted().zipWithNext { a, b -> b - a }
+            sb.append("Tổng ${log.size} lần (giữ tối đa 100)\n")
+            if (gaps.isNotEmpty()) sb.append("Trung bình ${fmtDur(gaps.average().toLong())} một lần\n")
+            sb.append("\n")
+            log.take(40).forEach { sb.append("• ${fmt.format(java.util.Date(it.first))}  ${it.second}\n") }
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Nhật ký ghi đè")
+            .setMessage(sb.toString())
+            .setPositiveButton("Đóng", null)
+            .setNegativeButton("Xóa nhật ký") { _, _ -> Guard.clearOverrideLog(this); updateStatus() }
+            .show().also { styleDialog(it) }
+    }
+
+    // ---------- Sao lưu / khôi phục ----------
+    private val REQ_EXPORT = 4101
+    private val REQ_IMPORT = 4102
+
+    private fun showBackupMenu() {
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Sao lưu / khôi phục")
+            .setItems(arrayOf("Sao lưu ra file", "Khôi phục từ file (thay thế cấu hình hiện tại)")) { _, i ->
+                try {
+                    if (i == 0) startActivityForResult(
+                        Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+                            .setType("application/json").putExtra(Intent.EXTRA_TITLE, "granter-backup.json"),
+                        REQ_EXPORT)
+                    else startActivityForResult(
+                        Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+                            .setType("*/*"), REQ_IMPORT)
+                } catch (e: Exception) { toast("Không mở được trình chọn file") }
+            }
+            .setNegativeButton("Hủy", null)
+            .show().also { styleDialog(it) }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        when (requestCode) {
+            REQ_EXPORT -> exportConfig(uri)
+            REQ_IMPORT -> importConfig(uri)
+        }
+    }
+
+    private fun exportConfig(uri: android.net.Uri) {
+        thread {
+            try {
+                val j = org.json.JSONObject()
+                j.put("app", "granter")
+                j.put("version", 1)
+                j.put("pinned", org.json.JSONArray(prefs.getStringSet("pinned", emptySet())!!.sorted()))
+                j.put("fixed", org.json.JSONArray(prefs.getStringSet("fixed", emptySet())!!.sorted()))
+                j.put("freeze_extra", org.json.JSONArray(FreezeStore.extra(this).sorted()))
+                j.put("freeze_exclude", org.json.JSONArray(FreezeStore.exclude(this).sorted()))
+                contentResolver.openOutputStream(uri, "wt")!!.use { it.write(j.toString(2).toByteArray(Charsets.UTF_8)) }
+                log("✅ Đã sao lưu: ${prefs.getStringSet("pinned", emptySet())!!.size} app đã cấp, " +
+                        "${FreezeStore.extra(this).size} gói thêm tay, ${FreezeStore.exclude(this).size} gói loại trừ.")
+            } catch (e: Throwable) { log("❌ Sao lưu lỗi: ${e.message}") }
+        }
+    }
+
+    private fun importConfig(uri: android.net.Uri) {
+        thread {
+            try {
+                val bytes = contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                if (bytes.size > 512 * 1024) { log("❌ File quá lớn, không phải bản sao lưu Granter."); return@thread }
+                val j = org.json.JSONObject(String(bytes, Charsets.UTF_8))
+                if (j.optString("app") != "granter" || j.optInt("version", 0) != 1) {
+                    log("❌ File không phải bản sao lưu Granter."); return@thread
+                }
+                fun arr(k: String): Set<String> {
+                    val a = j.optJSONArray(k) ?: return emptySet()
+                    return (0 until a.length()).map { a.optString(it) }.filter { FreezeStore.isValid(it) }.toSet()
+                }
+                val pinned = arr("pinned"); val fixed = arr("fixed")
+                val extra = arr("freeze_extra"); val exclude = arr("freeze_exclude")
+                prefs.edit().putStringSet("pinned", pinned).putStringSet("fixed", fixed).apply()
+                FreezeStore.save(this, extra, exclude)
+                try { Guard.applyFreeze(this) } catch (e: Throwable) {}
+                runOnUiThread { refreshPinned() }
+                updateStatus()
+                log("✅ Đã khôi phục: ${pinned.size} app đã cấp, ${fixed.size} app sửa hàng loạt, " +
+                        "${extra.size} gói thêm tay, ${exclude.size} gói loại trừ.\n" +
+                        "Lưu ý: quyền của từng app chưa được cấp lại, bấm ⚡ ở từng app (hoặc Cấp full quyền).")
+            } catch (e: Throwable) { log("❌ Khôi phục lỗi: ${e.message}") }
+        }
     }
 
     private fun openWriteSettings() {
@@ -704,12 +946,7 @@ class MainActivity : Activity() {
         "for p in ${pkgs.joinToString(" ")}; do " +
         "case \",\$cur,\" in *\",\$p,\"*) ;; *) cur=\"\${cur:+\$cur,}\$p\";; esac; done; " +
         "settings --user 0 put system MILLET_NO_RESTRICT_APP \"\$cur\"; " +
-        "for t in system global secure; do " +
-        "fz=\$(settings --user 0 get \$t cloud_memory_freeze_whitelist 2>/dev/null); " +
-        "case \",\$fz,\" in ,,|,null,) ;; *) " +
-        "for p in ${Guard.freezeWanted(this).joinToString(" ")}; do " +
-        "case \",\$fz,\" in *\",\$p,\"*) ;; *) fz=\"\$fz,\$p\";; esac; done; " +
-        "settings --user 0 put \$t cloud_memory_freeze_whitelist \"\$fz\" 2>/dev/null;; esac; done; " +
+        FreezeStore.script(this, Guard.freezeWanted(this)) +
         "echo \"MILLET_NO_RESTRICT_APP=\$(settings --user 0 get system MILLET_NO_RESTRICT_APP)\""
 
     // ---------- Cấp quyền ----------

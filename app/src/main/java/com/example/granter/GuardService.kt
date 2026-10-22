@@ -21,7 +21,11 @@ import kotlin.concurrent.thread
 class GuardService : Service() {
 
     private val h = Handler(Looper.getMainLooper())
-    private val task = Runnable { thread { Guard.fire(applicationContext) } }
+    @Volatile private var logNext = false
+    private val task = Runnable {
+        val l = logNext; logNext = false
+        thread { Guard.fire(applicationContext, l) }
+    }
     private val licTask = object : Runnable {
         override fun run() {
             thread {
@@ -42,7 +46,7 @@ class GuardService : Service() {
     override fun onCreate() {
         super.onCreate()
         val o = object : ContentObserver(h) {
-            override fun onChange(selfChange: Boolean) { schedule() }
+            override fun onChange(selfChange: Boolean) { logNext = true; schedule() }
         }
         obs = o
         try {

@@ -23,7 +23,7 @@ class GuardJob : JobService() {
             try {
                 again = Gate.ok(ctx) &&
                         License.refreshIfDue(ctx, 6 * 60 * 60 * 1000L) == License.State.ACTIVE
-                if (again) Guard.fire(ctx)
+                if (again) Guard.fire(ctx, log = true)
             } catch (e: Throwable) {
             } finally {
                 // Job theo dõi nội dung chỉ chạy một lần: phải đăng ký lại trước khi kết thúc
@@ -41,6 +41,11 @@ class GuardJob : JobService() {
 
         /** Theo dõi nội dung (TriggerContentUri) cần Android 7.0 trở lên. */
         fun supported(): Boolean = Build.VERSION.SDK_INT >= 24
+
+        /** Job theo dõi khóa đang được đăng ký trong hệ thống? */
+        fun isScheduled(ctx: Context): Boolean = try {
+            supported() && js(ctx).getPendingJob(JOB_ID) != null
+        } catch (e: Throwable) { false }
 
         private fun js(ctx: Context) =
             ctx.getSystemService(Context.JOB_SCHEDULER_SERVICE) as JobScheduler

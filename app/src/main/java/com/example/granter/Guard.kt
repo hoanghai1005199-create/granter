@@ -114,42 +114,19 @@ object Guard {
     }
 
     /**
-     * Nối các gói còn thiếu vào cloud_memory_freeze_whitelist (chỉ ở bảng nào khóa đã có giá trị,
-     * giữ nguyên gói hệ thống đã có). Ghi trực tiếp nếu đủ quyền, không thì nhờ máy chủ shell.
+     * Cập nhật cloud_memory_freeze_whitelist theo FreezeStore: nối gói cần giữ + gói thêm tay,
+     * gỡ gói loại trừ (chỉ ở bảng nào khóa đã có giá trị). Ghi trực tiếp nếu đủ quyền,
+     * không thì nhờ máy chủ shell.
      */
     fun applyFreeze(ctx: Context) {
         val want = freezeWanted(ctx)
-        val cr = ctx.contentResolver
-        var needServer = false
-        val tables = listOf<Triple<String, () -> String?, (String) -> Boolean>>(
-            Triple("system", { Settings.System.getString(cr, FREEZE_KEY) },
-                { v -> Settings.System.putString(cr, FREEZE_KEY, v) }),
-            Triple("global", { Settings.Global.getString(cr, FREEZE_KEY) },
-                { v -> Settings.Global.putString(cr, FREEZE_KEY, v) }),
-            Triple("secure", { Settings.Secure.getString(cr, FREEZE_KEY) },
-                { v -> Settings.Secure.putString(cr, FREEZE_KEY, v) }))
-        for ((_, get, put) in tables) {
-            val cur: String = (try { get() } catch (e: Throwable) { null }) ?: continue
-            if (cur.isBlank() || cur == "null") continue
-            val have = cur.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-            val missing = want.filter { it !in have }
-            if (missing.isEmpty()) continue
-            val ok = try { put((have + missing).joinToString(",")) } catch (e: Throwable) { false }
-            if (!ok) needServer = true
-        }
-        if (needServer) applyFreezeViaServer(ctx, want)
+        if (!FreezeStore.applyDirect(ctx, want)) applyFreezeViaServer(ctx, want)
     }
 
     private fun applyFreezeViaServer(ctx: Context, want: List<String>) {
         if (!HhServer.ping(ctx)) return
-        val script = "for t in system global secure; do " +
-                "fz=\$(settings --user 0 get \$t $FREEZE_KEY 2>/dev/null); " +
-                "case \",\$fz,\" in ,,|,null,) ;; *) orig=\"\$fz\"; " +
-                "for p in ${want.joinToString(" ")}; do " +
-                "case \",\$fz,\" in *\",\$p,\"*) ;; *) fz=\"\$fz,\$p\";; esac; done; " +
-                "[ \"\$fz\" != \"\$orig\" ] && settings --user 0 put \$t $FREEZE_KEY \"\$fz\" 2>/dev/null;; " +
-                "esac; done"
-        HhServer.exec(ctx, script)
+        val script = FreezeStore.script(ctx, want)
+        if (script.isNotEmpty()) HhServer.exec(ctx, script)
     }
 
     fun kickFcm(ctx: Context) {
@@ -162,8 +139,51 @@ object Guard {
         }
     }
 
-    fun fire(ctx: Context) {
+    // ---------- Nhật ký ghi đè ----------
+    private const val P_LOG = "override_log"
+    private val logLock = Any()
+    private fun gp(ctx: Context) = ctx.getSharedPreferences("granter", Context.MODE_PRIVATE)
+
+    /** Danh sách (giờ, loại) các lần hệ thống ghi đè khóa, cũ đến mới, tối đa 100 dòng. */
+    fun overrideLog(ctx: Context): List<Pair<Long, String>> = synchronized(logLock) {
+        (gp(ctx).getString(P_LOG, "") ?: "").lines().mapNotNull { l ->
+            val t = l.substringBefore('|').toLongOrNull() ?: return@mapNotNull null
+            t to l.substringAfter('|', "")
+        }
+    }
+
+    private fun addLog(ctx: Context, what: String) = synchronized(logLock) {
+        val all = (overrideLog(ctx) + (System.currentTimeMillis() to what)).takeLast(100)
+        gp(ctx).edit().putString(P_LOG, all.joinToString("\n") { "${it.first}|${it.second}" }).apply()
+    }
+
+    fun clearOverrideLog(ctx: Context) = synchronized(logLock) {
+        gp(ctx).edit().remove(P_LOG).apply()
+    }
+
+    /** Danh sách Millet đang thiếu gói cần giữ? */
+    fun milletMissing(ctx: Context): Boolean {
+        val have = (try { Settings.System.getString(ctx.contentResolver, KEY) } catch (e: Throwable) { null } ?: "")
+            .split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        return wanted(ctx).any { it !in have }
+    }
+
+    /** Khóa freeze ở bảng nào đó cần sửa? */
+    fun freezeStale(ctx: Context): Boolean {
+        val want = freezeWanted(ctx)
+        return FreezeStore.TABLES.any { FreezeStore.merged(ctx, FreezeStore.read(ctx, it), want) != null }
+    }
+
+    /** log = true: lần chạy này do hệ thống đổi khóa (không phải mở app/khởi động), ghi nhật ký nếu có ghi đè. */
+    fun fire(ctx: Context, log: Boolean = false) {
         if (License.local(ctx) != License.State.ACTIVE) return
+        if (log) {
+            try {
+                val m = milletMissing(ctx)
+                val f = freezeStale(ctx)
+                if (m || f) addLog(ctx, if (m && f) "millet+freeze" else if (m) "millet" else "freeze")
+            } catch (e: Throwable) {}
+        }
         applyMillet(ctx)
         try { applyFreeze(ctx) } catch (e: Throwable) {}
         kickFcm(ctx)
