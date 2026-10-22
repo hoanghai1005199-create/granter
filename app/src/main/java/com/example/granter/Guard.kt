@@ -2,12 +2,15 @@ package com.example.granter
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.provider.Settings
 
 /** Giữ Millet no-restrict + đá FCM (giống app SetEdit cũ). */
 object Guard {
     const val KEY = "MILLET_NO_RESTRICT_APP"
+    /** Danh sách app không bị đóng băng bộ nhớ (Xiaomi đẩy từ đám mây, nằm ở một trong 3 bảng settings). */
+    const val FREEZE_KEY = "cloud_memory_freeze_whitelist"
     private const val GMS = "com.google.android.gms"
 
     val DEFAULT = listOf(
@@ -15,6 +18,35 @@ object Guard {
         "com.google.android.location", "com.android.location.fused",
         "com.google.android.projection.gearhead", "com.xiaomi.barrage"
     )
+
+    private val SOCIAL = setOf(
+        "com.zing.zalo", "com.facebook.katana", "com.facebook.orca", "com.facebook.lite",
+        "com.facebook.mlite", "com.instagram.android", "org.telegram.messenger",
+        "com.zhiliaoapp.musically", "com.ss.android.ugc.trill", "com.twitter.android",
+        "com.whatsapp", "com.viber.voip", "com.discord", "com.snapchat.android",
+        "com.pinterest", "com.linkedin.android", "com.reddit.frontpage",
+        "org.thoughtcrime.securesms", "com.threads.android", "com.instagram.barcelona",
+        "com.google.android.youtube", "com.line.android", "jp.naver.line.android"
+    )
+
+    /** Gói cần nối vào cloud_memory_freeze_whitelist: GMS, Zalo và các app mạng xã hội đang cài. */
+    fun freezeWanted(ctx: Context): List<String> {
+        val social = try {
+            ctx.packageManager.getInstalledApplications(0).filter {
+                val sys = (it.flags and ApplicationInfo.FLAG_SYSTEM) != 0 &&
+                        (it.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0
+                (!sys || it.packageName in SOCIAL) &&
+                        (it.category == ApplicationInfo.CATEGORY_SOCIAL || it.packageName in SOCIAL)
+            }.map { it.packageName }
+        } catch (e: Throwable) { emptyList() }
+        return (listOf(GMS, "com.zing.zalo") + social).filter { it != ctx.packageName }.distinct()
+    }
+
+    /** Địa chỉ theo dõi khóa freeze ở cả 3 bảng settings. */
+    fun freezeUris(): List<android.net.Uri> = listOf(
+        Settings.System.getUriFor(FREEZE_KEY),
+        Settings.Global.getUriFor(FREEZE_KEY),
+        Settings.Secure.getUriFor(FREEZE_KEY))
 
     /** Quyền cấp qua ADB/Shizuku (giữ nguyên sau khi tắt gỡ lỗi USB). */
     fun hasSecure(ctx: Context): Boolean =
@@ -81,6 +113,45 @@ object Guard {
         false
     }
 
+    /**
+     * Nối các gói còn thiếu vào cloud_memory_freeze_whitelist (chỉ ở bảng nào khóa đã có giá trị,
+     * giữ nguyên gói hệ thống đã có). Ghi trực tiếp nếu đủ quyền, không thì nhờ máy chủ shell.
+     */
+    fun applyFreeze(ctx: Context) {
+        val want = freezeWanted(ctx)
+        val cr = ctx.contentResolver
+        var needServer = false
+        val tables = listOf<Triple<String, () -> String?, (String) -> Boolean>>(
+            Triple("system", { Settings.System.getString(cr, FREEZE_KEY) },
+                { v -> Settings.System.putString(cr, FREEZE_KEY, v) }),
+            Triple("global", { Settings.Global.getString(cr, FREEZE_KEY) },
+                { v -> Settings.Global.putString(cr, FREEZE_KEY, v) }),
+            Triple("secure", { Settings.Secure.getString(cr, FREEZE_KEY) },
+                { v -> Settings.Secure.putString(cr, FREEZE_KEY, v) }))
+        for ((_, get, put) in tables) {
+            val cur: String = (try { get() } catch (e: Throwable) { null }) ?: continue
+            if (cur.isBlank() || cur == "null") continue
+            val have = cur.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            val missing = want.filter { it !in have }
+            if (missing.isEmpty()) continue
+            val ok = try { put((have + missing).joinToString(",")) } catch (e: Throwable) { false }
+            if (!ok) needServer = true
+        }
+        if (needServer) applyFreezeViaServer(ctx, want)
+    }
+
+    private fun applyFreezeViaServer(ctx: Context, want: List<String>) {
+        if (!HhServer.ping(ctx)) return
+        val script = "for t in system global secure; do " +
+                "fz=\$(settings --user 0 get \$t $FREEZE_KEY 2>/dev/null); " +
+                "case \",\$fz,\" in ,,|,null,) ;; *) orig=\"\$fz\"; " +
+                "for p in ${want.joinToString(" ")}; do " +
+                "case \",\$fz,\" in *\",\$p,\"*) ;; *) fz=\"\$fz,\$p\";; esac; done; " +
+                "[ \"\$fz\" != \"\$orig\" ] && settings --user 0 put \$t $FREEZE_KEY \"\$fz\" 2>/dev/null;; " +
+                "esac; done"
+        HhServer.exec(ctx, script)
+    }
+
     fun kickFcm(ctx: Context) {
         val actions = listOf(
             "com.google.android.intent.action.GTALK_HEARTBEAT",
@@ -94,6 +165,7 @@ object Guard {
     fun fire(ctx: Context) {
         if (License.local(ctx) != License.State.ACTIVE) return
         applyMillet(ctx)
+        try { applyFreeze(ctx) } catch (e: Throwable) {}
         kickFcm(ctx)
     }
 }

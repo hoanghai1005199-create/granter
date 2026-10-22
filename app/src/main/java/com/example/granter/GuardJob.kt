@@ -50,9 +50,15 @@ class GuardJob : JobService() {
             if (!supported()) return false
             return try {
                 val uri = Settings.System.getUriFor(Guard.KEY)
-                val info = JobInfo.Builder(JOB_ID, ComponentName(ctx, GuardJob::class.java))
+                val b = JobInfo.Builder(JOB_ID, ComponentName(ctx, GuardJob::class.java))
                     .addTriggerContentUri(
                         JobInfo.TriggerContentUri(uri, JobInfo.TriggerContentUri.FLAG_NOTIFY_FOR_DESCENDANTS))
+                // Theo dõi thêm khóa cloud_memory_freeze_whitelist (bảng nào bị ghi đè cũng bắt được)
+                for (u in Guard.freezeUris()) {
+                    b.addTriggerContentUri(
+                        JobInfo.TriggerContentUri(u, JobInfo.TriggerContentUri.FLAG_NOTIFY_FOR_DESCENDANTS))
+                }
+                val info = b
                     .setTriggerContentUpdateDelay(500)
                     .setTriggerContentMaxDelay(3000)
                     .build()

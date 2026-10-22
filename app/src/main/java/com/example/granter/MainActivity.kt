@@ -601,12 +601,27 @@ class MainActivity : Activity() {
     }
 
     /** Đọc danh sách MILLET_NO_RESTRICT_APP hiện tại (đọc không cần quyền đặc biệt). */
+    /** Đọc khóa cloud_memory_freeze_whitelist ở cả 3 bảng settings (chỉ đọc, không ghi). */
+    private fun freezerInfo(): String {
+        val key = "cloud_memory_freeze_whitelist"
+        val sb = StringBuilder("\n❄ $key:\n")
+        val tables = listOf(
+            "system" to { Settings.System.getString(contentResolver, key) },
+            "global" to { Settings.Global.getString(contentResolver, key) },
+            "secure" to { Settings.Secure.getString(contentResolver, key) })
+        for ((name, get) in tables) {
+            val v = try { get() } catch (e: Throwable) { "(lỗi: ${e.message})" }
+            sb.append("• $name: ").append(if (v.isNullOrEmpty()) "(không có)" else v).append("\n")
+        }
+        return sb.toString()
+    }
+
     private fun showMillet() {
         val raw = try { Settings.System.getString(contentResolver, Guard.KEY) } catch (e: Throwable) { null }
         val list = (raw ?: "").split(",").map { it.trim() }.filter { it.isNotEmpty() }
         if (list.isEmpty()) {
             tvLog.text = "MILLET_NO_RESTRICT_APP đang trống (hoặc không đọc được).\n" +
-                    "Có thể PowerKeeper đã xóa. Mở lại app để tự ghi lại."
+                    "Có thể PowerKeeper đã xóa. Mở lại app để tự ghi lại." + freezerInfo()
             return
         }
         val want = Guard.wanted(this).toSet()
@@ -624,6 +639,7 @@ class MainActivity : Activity() {
             missing.forEach { sb.append("   $it\n") }
         }
         sb.append("\n🛡 = gói Granter giữ (mặc định, đã ghim, đã sửa)")
+        sb.append(freezerInfo())
         tvLog.text = sb.toString()
     }
 
@@ -688,6 +704,12 @@ class MainActivity : Activity() {
         "for p in ${pkgs.joinToString(" ")}; do " +
         "case \",\$cur,\" in *\",\$p,\"*) ;; *) cur=\"\${cur:+\$cur,}\$p\";; esac; done; " +
         "settings --user 0 put system MILLET_NO_RESTRICT_APP \"\$cur\"; " +
+        "for t in system global secure; do " +
+        "fz=\$(settings --user 0 get \$t cloud_memory_freeze_whitelist 2>/dev/null); " +
+        "case \",\$fz,\" in ,,|,null,) ;; *) " +
+        "for p in ${Guard.freezeWanted(this).joinToString(" ")}; do " +
+        "case \",\$fz,\" in *\",\$p,\"*) ;; *) fz=\"\$fz,\$p\";; esac; done; " +
+        "settings --user 0 put \$t cloud_memory_freeze_whitelist \"\$fz\" 2>/dev/null;; esac; done; " +
         "echo \"MILLET_NO_RESTRICT_APP=\$(settings --user 0 get system MILLET_NO_RESTRICT_APP)\""
 
     // ---------- Cấp quyền ----------
