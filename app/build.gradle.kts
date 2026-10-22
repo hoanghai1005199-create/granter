@@ -6,7 +6,6 @@ plugins {
 android {
     namespace = "com.example.granter"
     compileSdk = 34
-    // THÊM DÒNG NÀY: Chỉ định rõ bản NDK cho GitHub Actions
     ndkVersion = "26.1.10909125" 
 
     defaultConfig {
@@ -16,7 +15,6 @@ android {
         versionCode = 2
         versionName = "1.1"
 
-        // THÊM: Cấu hình NDK
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
         }
@@ -28,7 +26,6 @@ android {
         }
     }
 
-    // THÊM: Đường dẫn CMake
     externalNativeBuild {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")
