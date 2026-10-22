@@ -38,6 +38,7 @@ object License {
     private const val SAME_BOOT_TOLERANCE_MS = 120_000L
     private const val CLOCK_SKEW_TOLERANCE_MS = 5L * 60 * 1000
 
+    // Mã SHA-256 chuẩn từ Keystore của bạn
     private const val EXPECTED_CERT = "5229A654918A31A4E8A5A1EF54F00796FD7BFCFA7DAD040FE64D3CD49A95DE88"
     private const val PREFS = "lic3"
     private const val TAG = "License"
@@ -46,6 +47,7 @@ object License {
     private val lastLocal = AtomicLong(0)
     private val lastLocalState = AtomicReference(State.OFFLINE)
 
+    // Khai báo Native C++
     init {
         try {
             System.loadLibrary("license")
@@ -86,16 +88,16 @@ object License {
         return b.joinToString("") { "%02x".format(it) }
     }
 
-    // Hàm verify có Fallback: Thử C++ trước, nếu lỗi hoặc false thì thử bằng Java
+    // Hàm Verify: Ưu tiên C++, nếu lỗi tự động Fallback về Java
     private fun verify(payload: String, sigB64: String): Boolean {
-        return try {
-            // 1. Thử dùng C++
-            if (nativeVerify(payload, sigB64, PUBLIC_KEY)) return true
+        try {
+            if (nativeVerify(payload, sigB64, PUBLIC_KEY)) {
+                return true
+            }
         } catch (e: Throwable) {
             Log.e(TAG, "Native verify exception", e)
         }
-        
-        // 2. Nếu C++ lỗi hoặc false -> Fallback về Java để đảm bảo App không bị khóa oan
+
         return try {
             val pub = KeyFactory.getInstance("RSA").generatePublic(X509EncodedKeySpec(Base64.decode(PUBLIC_KEY, Base64.DEFAULT)))
             val s = Signature.getInstance("SHA256withRSA")
@@ -136,7 +138,7 @@ object License {
     fun local(c: Context): State {
         if (!certOk(c)) return State.OFFLINE
         val p = sp(c)
-        val kid     = p.getString("kid",     "k1")  // Mặc định k1 nếu chưa có
+        val kid     = p.getString("kid",     "k1") 
         val nonce   = p.getString("nonce",   null) ?: return State.OFFLINE
         val status  = p.getString("status",  null) ?: return State.OFFLINE
         val expiryS = p.getString("expiry",  "0")  ?: "0"
@@ -146,7 +148,7 @@ object License {
 
         if (fp != deviceFingerprint()) return State.OFFLINE
         
-        // Verify theo payload chuẩn CÓ KID
+        // Payload verify khớp với Server
         val payload = "v3|$kid|$nonce|${deviceCode(c)}|$fp|$status|$expiryS|$stS"
         if (!verify(payload, sig)) return State.OFFLINE
 
@@ -227,7 +229,7 @@ object License {
                 val st     = j.optString("server_time")
                 val sig    = j.optString("sig3")
 
-                // Verify payload chuẩn CÓ KID
+                // Payload verify khớp với Server
                 val payload = "v3|$kid|$nonce|$device|$fp|$status|$expiry|$st"
                 if (!verify(payload, sig)) return local(c)
 
