@@ -2,7 +2,6 @@ package com.example.granter
 
 import android.app.AppOpsManager
 import android.content.Context
-import android.content.pm.PackageManager
 import android.os.Build
 import android.os.PowerManager
 import android.os.Process
@@ -38,8 +37,6 @@ object License {
     private const val SAME_BOOT_TOLERANCE_MS = 120_000L
     private const val CLOCK_SKEW_TOLERANCE_MS = 5L * 60 * 1000
 
-    // Mã SHA-256 chuẩn từ Keystore của bạn
-    private const val EXPECTED_CERT = "5229A654918A31A4E8A5A1EF54F00796FD7BFCFA7DAD040FE64D3CD49A95DE88"
     private const val PREFS = "lic3"
     private const val TAG = "License"
     private const val LOCAL_CACHE_MS = 8000L
@@ -47,7 +44,6 @@ object License {
     private val lastLocal = AtomicLong(0)
     private val lastLocalState = AtomicReference(State.OFFLINE)
 
-    // Khai báo Native C++
     init {
         try {
             System.loadLibrary("license")
@@ -88,41 +84,25 @@ object License {
         return b.joinToString("") { "%02x".format(it) }
     }
 
-    // Hàm Verify: Ưu tiên C++, nếu lỗi tự động Fallback về Java
+    // Verify: ưu tiên C++, lỗi thì fallback Java
     private fun verify(payload: String, sigB64: String): Boolean {
         try {
-            if (nativeVerify(payload, sigB64, PUBLIC_KEY)) {
-                return true
-            }
+            if (nativeVerify(payload, sigB64, PUBLIC_KEY)) return true
         } catch (e: Throwable) {
             Log.e(TAG, "Native verify exception", e)
         }
 
         return try {
-            val pub = KeyFactory.getInstance("RSA").generatePublic(X509EncodedKeySpec(Base64.decode(PUBLIC_KEY, Base64.DEFAULT)))
+            val pub = KeyFactory.getInstance("RSA")
+                .generatePublic(X509EncodedKeySpec(Base64.decode(PUBLIC_KEY, Base64.DEFAULT)))
             val s = Signature.getInstance("SHA256withRSA")
             s.initVerify(pub)
             s.update(payload.toByteArray(Charsets.UTF_8))
             s.verify(Base64.decode(sigB64, Base64.DEFAULT))
-        } catch (e: Throwable) { 
+        } catch (e: Throwable) {
             Log.e(TAG, "Java verify exception", e)
-            false 
+            false
         }
-    }
-
-    @Suppress("DEPRECATION")
-    private fun certOk(c: Context): Boolean {
-        if (EXPECTED_CERT.isEmpty()) return true
-        return try {
-            val sigs = if (Build.VERSION.SDK_INT >= 28) {
-                c.packageManager.getPackageInfo(c.packageName, PackageManager.GET_SIGNING_CERTIFICATES).signingInfo?.apkContentsSigners
-            } else {
-                c.packageManager.getPackageInfo(c.packageName, PackageManager.GET_SIGNATURES).signatures
-            }
-            sigs?.any {
-                MessageDigest.getInstance("SHA-256").digest(it.toByteArray()).joinToString("") { b -> "%02X".format(b) } == EXPECTED_CERT
-            } ?: false
-        } catch (e: Throwable) { false }
     }
 
     fun localCached(c: Context): State {
@@ -136,9 +116,8 @@ object License {
     }
 
     fun local(c: Context): State {
-        if (!certOk(c)) return State.OFFLINE
         val p = sp(c)
-        val kid     = p.getString("kid",     "k1") 
+        val kid     = p.getString("kid",     "k1")
         val nonce   = p.getString("nonce",   null) ?: return State.OFFLINE
         val status  = p.getString("status",  null) ?: return State.OFFLINE
         val expiryS = p.getString("expiry",  "0")  ?: "0"
@@ -146,11 +125,16 @@ object License {
         val sig     = p.getString("sig",     null) ?: return State.OFFLINE
         val fp      = p.getString("fp",      null) ?: return State.OFFLINE
 
-        if (fp != deviceFingerprint()) return State.OFFLINE
-        
-        // Payload verify khớp với Server
+        if (fp != deviceFingerprint()) {
+            Log.w(TAG, "local: fingerprint mismatch")
+            return State.OFFLINE
+        }
+
         val payload = "v3|$kid|$nonce|${deviceCode(c)}|$fp|$status|$expiryS|$stS"
-        if (!verify(payload, sig)) return State.OFFLINE
+        if (!verify(payload, sig)) {
+            Log.w(TAG, "local: signature invalid")
+            return State.OFFLINE
+        }
 
         when (status) {
             "REVOKED" -> return State.REVOKED
@@ -179,7 +163,9 @@ object License {
 
     private fun sysprop(key: String): String {
         var v = try {
-            Class.forName("android.os.SystemProperties").getMethod("get", String::class.java, String::class.java).invoke(null, key, "") as String
+            Class.forName("android.os.SystemProperties")
+                .getMethod("get", String::class.java, String::class.java)
+                .invoke(null, key, "") as String
         } catch (e: Throwable) { "" }
         if (v.isBlank()) v = try {
             Runtime.getRuntime().exec(arrayOf("getprop", key)).inputStream.bufferedReader().readText().trim()
@@ -201,6 +187,7 @@ object License {
 
     private val refreshing = AtomicBoolean(false)
 
+    // Phải gọi ở thread nền (Dispatchers.IO / Thread), không gọi trên main thread
     fun refresh(c: Context): State {
         if (!refreshing.compareAndSet(false, true)) return local(c)
         try {
@@ -217,11 +204,21 @@ object License {
                     "&auto="   + autostart(c) +
                     "&bat="    + (if (batteryOk(c)) 1 else 0)
 
-            val body = http(url) ?: return local(c)
+            val body = http(url)
+            if (body == null) {
+                Log.w(TAG, "refresh: không có phản hồi từ server")
+                return local(c)
+            }
             try {
                 val j = JSONObject(body)
-                if (!j.optBoolean("ok", false)) return local(c)
-                if (j.optString("nonce") != nonce) return local(c)
+                if (!j.optBoolean("ok", false)) {
+                    Log.w(TAG, "refresh: server ok=false, error=" + j.optString("error") + " " + j.optString("detail"))
+                    return local(c)
+                }
+                if (j.optString("nonce") != nonce) {
+                    Log.w(TAG, "refresh: nonce không khớp")
+                    return local(c)
+                }
 
                 val kid    = j.optString("kid", "k1")
                 val status = j.optString("status")
@@ -229,10 +226,13 @@ object License {
                 val st     = j.optString("server_time")
                 val sig    = j.optString("sig3")
 
-                // Payload verify khớp với Server
                 val payload = "v3|$kid|$nonce|$device|$fp|$status|$expiry|$st"
-                if (!verify(payload, sig)) return local(c)
+                if (!verify(payload, sig)) {
+                    Log.w(TAG, "refresh: sai chữ ký (kiểm tra cặp PUBLIC_KEY / V2_PRIV)")
+                    return local(c)
+                }
 
+                Log.d(TAG, "refresh OK: status=$status")
                 sp(c).edit()
                     .putString("kid",    kid)
                     .putString("nonce",  nonce)
@@ -246,6 +246,7 @@ object License {
                     .putLong("last_try", System.currentTimeMillis())
                     .apply()
             } catch (e: Throwable) {
+                Log.e(TAG, "refresh: lỗi đọc JSON", e)
                 return local(c)
             }
             return local(c)
@@ -277,8 +278,15 @@ object License {
             cn.readTimeout = 15_000
             cn.instanceFollowRedirects = true
             cn.setRequestProperty("User-Agent", "Granter/License")
-            if (cn.responseCode == 200) cn.inputStream.bufferedReader().use { it.readText() } else null
+            val code = cn.responseCode
+            Log.d(TAG, "HTTP $code")
+            if (code == 200) {
+                val b = cn.inputStream.bufferedReader().use { it.readText() }
+                Log.d(TAG, "body=" + b.take(300))
+                b
+            } else null
         } catch (e: Throwable) {
+            Log.e(TAG, "http fail", e)
             null
         } finally {
             try { cn?.disconnect() } catch (_: Throwable) {}
@@ -291,7 +299,9 @@ object License {
 
     fun autostart(c: Context): Int = try {
         val ops = c.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
-        val m = AppOpsManager::class.java.getMethod("checkOpNoThrow", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, String::class.java)
+        val m = AppOpsManager::class.java.getMethod(
+            "checkOpNoThrow", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, String::class.java
+        )
         if ((m.invoke(ops, 10008, Process.myUid(), c.packageName) as Int) == 0) 1 else 0
     } catch (e: Throwable) { -1 }
 }
