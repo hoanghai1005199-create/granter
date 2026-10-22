@@ -46,9 +46,6 @@ object License {
     private val lastLocal = AtomicLong(0)
     private val lastLocalState = AtomicReference(State.OFFLINE)
 
-    // =====================================================================
-    // KHAI BÁO NATIVE (C++) - THÊM MỚI
-    // =====================================================================
     init {
         try {
             System.loadLibrary("license")
@@ -58,7 +55,6 @@ object License {
     }
 
     private external fun nativeVerify(payload: String, sigB64: String, pubKeyB64: String): Boolean
-    // =====================================================================
 
     private fun sp(c: Context) = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
@@ -90,19 +86,27 @@ object License {
         return b.joinToString("") { "%02x".format(it) }
     }
 
-    // =====================================================================
-    // HÀM VERIFY ĐÃ ĐƯỢC CHUYỂN SANG GỌI NATIVE C++
-    // =====================================================================
+    // Hàm verify có Fallback: Thử C++ trước, nếu lỗi hoặc false thì thử bằng Java
     private fun verify(payload: String, sigB64: String): Boolean {
         return try {
-            // Gọi hàm C++ thay vì dùng thư viện Java
-            nativeVerify(payload, sigB64, PUBLIC_KEY)
+            // 1. Thử dùng C++
+            if (nativeVerify(payload, sigB64, PUBLIC_KEY)) return true
         } catch (e: Throwable) {
-            Log.e(TAG, "Lỗi verify native", e)
-            false
+            Log.e(TAG, "Native verify exception", e)
+        }
+        
+        // 2. Nếu C++ lỗi hoặc false -> Fallback về Java để đảm bảo App không bị khóa oan
+        return try {
+            val pub = KeyFactory.getInstance("RSA").generatePublic(X509EncodedKeySpec(Base64.decode(PUBLIC_KEY, Base64.DEFAULT)))
+            val s = Signature.getInstance("SHA256withRSA")
+            s.initVerify(pub)
+            s.update(payload.toByteArray(Charsets.UTF_8))
+            s.verify(Base64.decode(sigB64, Base64.DEFAULT))
+        } catch (e: Throwable) { 
+            Log.e(TAG, "Java verify exception", e)
+            false 
         }
     }
-    // =====================================================================
 
     @Suppress("DEPRECATION")
     private fun certOk(c: Context): Boolean {
@@ -132,6 +136,7 @@ object License {
     fun local(c: Context): State {
         if (!certOk(c)) return State.OFFLINE
         val p = sp(c)
+        val kid     = p.getString("kid",     "k1")  // Mặc định k1 nếu chưa có
         val nonce   = p.getString("nonce",   null) ?: return State.OFFLINE
         val status  = p.getString("status",  null) ?: return State.OFFLINE
         val expiryS = p.getString("expiry",  "0")  ?: "0"
@@ -140,7 +145,9 @@ object License {
         val fp      = p.getString("fp",      null) ?: return State.OFFLINE
 
         if (fp != deviceFingerprint()) return State.OFFLINE
-        val payload = "v3|$nonce|${deviceCode(c)}|$fp|$status|$expiryS|$stS"
+        
+        // Verify theo payload chuẩn CÓ KID
+        val payload = "v3|$kid|$nonce|${deviceCode(c)}|$fp|$status|$expiryS|$stS"
         if (!verify(payload, sig)) return State.OFFLINE
 
         when (status) {
@@ -214,15 +221,18 @@ object License {
                 if (!j.optBoolean("ok", false)) return local(c)
                 if (j.optString("nonce") != nonce) return local(c)
 
+                val kid    = j.optString("kid", "k1")
                 val status = j.optString("status")
                 val expiry = j.optString("expiry", "0")
                 val st     = j.optString("server_time")
                 val sig    = j.optString("sig3")
 
-                val payload = "v3|$nonce|$device|$fp|$status|$expiry|$st"
+                // Verify payload chuẩn CÓ KID
+                val payload = "v3|$kid|$nonce|$device|$fp|$status|$expiry|$st"
                 if (!verify(payload, sig)) return local(c)
 
                 sp(c).edit()
+                    .putString("kid",    kid)
                     .putString("nonce",  nonce)
                     .putString("status", status)
                     .putString("expiry", expiry)
