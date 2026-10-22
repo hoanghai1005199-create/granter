@@ -48,22 +48,13 @@ class MainActivity : Activity() {
         else -> true
     }
 
-    /** Giao diện tối khi hệ thống đang ở chế độ tối. */
-    private val isNight by lazy {
-        (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
-            android.content.res.Configuration.UI_MODE_NIGHT_YES
-    }
-    private fun pick(light: String, dark: String) = Color.parseColor(if (isNight) dark else light)
+    private val BG = Color.parseColor("#FEF4F7")
+    private val BLUE = Color.parseColor("#F2A0BC")
+    private val ACCENT_TEXT = Color.parseColor("#B04A6E")
+    private val BAR = Color.parseColor("#FBD2E0")
+    private val DARK = Color.parseColor("#6D4C5B")
 
-    private val BG by lazy { pick("#FEF4F7", "#1B1519") }          // nền: trắng hồng nhẹ / tối
-    private val BLUE by lazy { pick("#F2A0BC", "#7A3F57") }        // màu nút
-    private val ACCENT_TEXT by lazy { pick("#B04A6E", "#F5A9C6") }
-    private val BAR by lazy { pick("#FBD2E0", "#2A1F25") }         // thanh trạng thái
-    private val DARK by lazy { pick("#6D4C5B", "#F1E3EA") }        // chữ chính
-    private val CIRCLE by lazy { pick("#FFFFFF", "#2E2429") }      // nền nút tròn
-    private val NAME_RED by lazy { pick("#E53935", "#FF8A80") }    // tên app trong danh sách
-
-    private val checked = LinkedHashSet<String>()   // gói đã tích trong danh sách
+    private var selected: AppItem? = null
     private lateinit var tvSelected: TextView
     private lateinit var tvLog: TextView
     private lateinit var tvStatus: TextView
@@ -109,7 +100,7 @@ class MainActivity : Activity() {
             addView(TextView(context).apply {
                 text = icon; textSize = 24f
                 gravity = android.view.Gravity.CENTER
-                background = shape(CIRCLE, true)
+                background = shape(Color.WHITE, true)
                 elevation = dp(4).toFloat()
                 layoutParams = LinearLayout.LayoutParams(dp(56), dp(56))
             })
@@ -159,18 +150,20 @@ class MainActivity : Activity() {
         val list = ListView(this).apply { layoutParams = LinearLayout.LayoutParams(-1, 0, 1f) }
         tvSelected = TextView(this).apply {
             text = "Chưa chọn ứng dụng"; textSize = 15f; setTextColor(DARK)
-            setPadding(0, dp(6), 0, dp(6))
         }
-        val none = { toast("Hãy tích chọn ít nhất một ứng dụng") }
+        val none = { toast("Hãy chọn ứng dụng trước") }
         val grid = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(circleRow(
-                circleButton("🔑", "Cấp quyền (các app đã tích)") {
-                    val apps = all.filter { it.pkg in checked }
-                    if (apps.isEmpty()) none() else grantMany(apps)
-                },
+                circleButton("🔑", "Cấp quyền") { selected?.let { grantAll(it) } ?: none() },
+                circleButton("📌", "Ghim / Bỏ ghim") { selected?.let { togglePin(it.pkg) } ?: none() },
                 circleButton("🔗", "Ghép nối ADB") { startPairing() },
                 circleButton("📶", "Kết nối ADB") { connectAdb() }))
+            addView(circleRow(
+                circleButton("🛡", "Millet không giới hạn") { selected?.let { milletOnly(it) } ?: none() },
+                circleButton("🔔", "Đánh thức FCM") { kickFcm(selected?.pkg) },
+                circleButton("🔒", "Bật tự động giữ") { enableGuard() },
+                circleButton("🔓", "Tắt tự động") { disableGuard() }))
             addView(circleRow(
                 circleButton("📡", "Kiểm tra FCM") { FcmCheck.open(this@MainActivity) },
                 circleButton("📋", "Xem Millet") { showMillet() },
@@ -210,15 +203,15 @@ class MainActivity : Activity() {
         root.addView(tvStatus)
         root.addView(pairBox)
         root.addView(TextView(this).apply {
-            text = "Ứng dụng đã cấp (bấm 1 lần để cấp lại, nhấn giữ để bỏ)"; textSize = 14f; setTextColor(DARK)
+            text = "Ứng dụng đã ghim (bấm 1 lần là xong)"; textSize = 14f; setTextColor(DARK)
         })
         root.addView(pinnedBox)
 
         val chipColors = mapOf(
-            "user" to Pair(pick("#FBD9E4", "#3A2530"), pick("#F2A0BC", "#8A4A63")),
-            "social" to Pair(pick("#D6EAFB", "#22323F"), pick("#8EC1F0", "#3F6F96")),
-            "bank" to Pair(pick("#D9F0DC", "#233628"), pick("#8FD19A", "#43774D")),
-            "all" to Pair(pick("#FBD9E4", "#3A2530"), pick("#F2A0BC", "#8A4A63")))
+            "user" to Pair(Color.parseColor("#FBD9E4"), Color.parseColor("#F2A0BC")),
+            "social" to Pair(Color.parseColor("#D6EAFB"), Color.parseColor("#8EC1F0")),
+            "bank" to Pair(Color.parseColor("#D9F0DC"), Color.parseColor("#8FD19A")),
+            "all" to Pair(Color.parseColor("#FBD9E4"), Color.parseColor("#F2A0BC")))
         val chips = mutableListOf<Pair<String, Button>>()
         var refreshList: () -> Unit = {}
         fun paintChips() = chips.forEach { (m, b) ->
@@ -257,57 +250,30 @@ class MainActivity : Activity() {
             }
             .sortedBy { it.label.lowercase() }
 
-        fun updateSelected() {
-            tvSelected.text = if (checked.isEmpty()) "Chưa chọn ứng dụng"
-            else "Đã chọn ${checked.size} ứng dụng (chạm vào đây để bỏ chọn hết)"
-        }
-        tvSelected.setOnClickListener {
-            checked.clear(); updateSelected(); refreshList()
-        }
         fun show(filter: String) {
             val items = all.filter {
                 matches(it) && (it.label.contains(filter, true) || it.pkg.contains(filter, true))
             }
-            list.choiceMode = ListView.CHOICE_MODE_NONE
             list.adapter = object : ArrayAdapter<AppItem>(
                 this, android.R.layout.simple_list_item_2, items) {
                 override fun getView(p: Int, v: View?, g: ViewGroup): View {
-                    val row = (v as? LinearLayout) ?: LinearLayout(g.context).apply {
-                        orientation = LinearLayout.HORIZONTAL
-                        gravity = android.view.Gravity.CENTER_VERTICAL
-                        setPadding(dp(4), dp(6), dp(4), dp(6))
-                        addView(CheckBox(g.context).apply {
-                            id = 1001; isClickable = false; isFocusable = false
-                            buttonTintList = ColorStateList.valueOf(ACCENT_TEXT)
-                        })
-                        addView(LinearLayout(g.context).apply {
-                            orientation = LinearLayout.VERTICAL
-                            layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
-                            addView(TextView(g.context).apply {
-                                id = 1002; textSize = 16f; setTextColor(NAME_RED)
-                            })
-                            addView(TextView(g.context).apply {
-                                id = 1003; textSize = 13f; setTextColor(DARK)
-                            })
-                        })
+                    val view = v ?: layoutInflater.inflate(
+                        android.R.layout.simple_list_item_2, g, false)
+                    view.findViewById<TextView>(android.R.id.text1).apply {
+                        text = items[p].label
+                        setTextColor(Color.parseColor("#E53935"))
                     }
-                    val it = items[p]
-                    row.findViewById<CheckBox>(1001).isChecked = it.pkg in checked
-                    row.findViewById<TextView>(1002).text = it.label
-                    row.findViewById<TextView>(1003).text = it.pkg
-                    return row
+                    view.findViewById<TextView>(android.R.id.text2).text = items[p].pkg
+                    return view
                 }
             }
             list.setOnItemClickListener { _, _, i, _ ->
-                val pkg = items[i].pkg
-                if (!checked.add(pkg)) checked.remove(pkg)
-                (list.adapter as BaseAdapter).notifyDataSetChanged()
-                updateSelected()
+                selected = items[i]
+                tvSelected.text = "Đã chọn: ${items[i].label} (${items[i].pkg})"
             }
         }
         refreshList = { show(search.text.toString()) }
         refreshList()
-        updateSelected()
         search.addTextChangedListener(object : android.text.TextWatcher {
             override fun afterTextChanged(s: android.text.Editable?) = show(s.toString())
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
@@ -384,8 +350,7 @@ class MainActivity : Activity() {
         val bad = Gate.installedConflicts(this)
         val needBattery = !Gate.batteryFree(this)
         val needAuto = Gate.autoStart(this) == 0
-        val needOpt = Gate.miuiOptimization(this) == 0
-        if (bad.isEmpty() && !needBattery && !needAuto && !needOpt) return true
+        if (bad.isEmpty() && !needBattery && !needAuto) return true
 
         try { stopService(Intent(this, GuardService::class.java)) } catch (ignored: Throwable) {}
         if (bad.isNotEmpty()) {
@@ -400,12 +365,10 @@ class MainActivity : Activity() {
         val sb = StringBuilder("HH tool chỉ chạy khi:\n")
         if (needBattery) sb.append("• Tiết kiệm pin: đặt \"Không hạn chế\"\n")
         if (needAuto) sb.append("• Tự khởi động: bật\n")
-        if (needOpt) sb.append("• Tùy chọn nhà phát triển: bật \"Turn on system optimization\" (rồi khởi động lại máy)\n")
         sb.append("\nBật xong quay lại app, hộp thoại này sẽ tự biến mất.")
         val acts = mutableListOf<Pair<String, () -> Unit>>()
         if (needBattery) acts.add("Cài đặt pin" to { openPowerSettings() })
         if (needAuto) acts.add("Tự khởi động" to { openAutoStartSettings() })
-        if (needOpt) acts.add("Tùy chọn NPT" to { tryStart(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)) })
         showGate("Cần bật quyền để dùng HH tool", sb.toString(), acts[0], acts.getOrNull(1))
         return false
     }
@@ -576,15 +539,9 @@ class MainActivity : Activity() {
     }
 
     // ---------- Ghim ----------
-    private fun addPinned(pkgs: Collection<String>) {
+    private fun togglePin(pkg: String) {
         val set = prefs.getStringSet("pinned", emptySet())!!.toMutableSet()
-        set.addAll(pkgs)
-        prefs.edit().putStringSet("pinned", set).apply()
-    }
-
-    private fun unpin(pkg: String) {
-        val set = prefs.getStringSet("pinned", emptySet())!!.toMutableSet()
-        set.remove(pkg)
+        if (!set.add(pkg)) set.remove(pkg)
         prefs.edit().putStringSet("pinned", set).apply()
         refreshPinned()
     }
@@ -595,9 +552,6 @@ class MainActivity : Activity() {
         all.filter { it.pkg in set }.forEach { app ->
             pinnedBox.addView(blueButton("⚡ ${app.label}") { grantAll(app) }.apply {
                 background = shape(BLUE, false); stateListAnimator = null
-                setOnLongClickListener {
-                    unpin(app.pkg); toast("Đã bỏ ${app.label} khỏi danh sách giữ"); true
-                }
             })
         }
     }
@@ -614,7 +568,7 @@ class MainActivity : Activity() {
         val list = (raw ?: "").split(",").map { it.trim() }.filter { it.isNotEmpty() }
         if (list.isEmpty()) {
             tvLog.text = "MILLET_NO_RESTRICT_APP đang trống (hoặc không đọc được).\n" +
-                    "Có thể PowerKeeper đã xóa. Mở lại app để tự ghi lại."
+                    "Có thể PowerKeeper đã xóa. Bấm BẬT TỰ ĐỘNG GIỮ để ghi lại."
             return
         }
         val want = Guard.wanted(this).toSet()
@@ -653,8 +607,8 @@ class MainActivity : Activity() {
             // Không có ADB: dùng quyền "Sửa đổi cài đặt hệ thống"
             if (!Guard.canWrite(this) && !HhServer.ping(this)) {
                 if (auto) {
-                    log("Tự động giữ chưa bật được: thiếu quyền ghi cài đặt hệ thống.\n" +
-                            "Bấm Ghép nối ADB rồi Kết nối ADB một lần, app sẽ tự cấp quyền; từ sau mở app là tự chạy.")
+                    log("Tự động giữ chưa bật được: thiếu quyền \"Sửa đổi cài đặt hệ thống\".\n" +
+                            "Bấm 🔒 Bật tự động giữ một lần để cấp quyền, từ sau mở app là tự chạy.")
                     return@thread
                 }
                 runOnUiThread { openWriteSettings() }
@@ -668,7 +622,7 @@ class MainActivity : Activity() {
                         "Lỗi thật: ${Guard.lastError}\n" +
                         "WRITE_SECURE_SETTINGS=${Guard.hasSecure(this)}, WRITE_SETTINGS=${Guard.hasWriteSettings(this)}\n" +
                         "Có thể HyperOS chặn ghi khóa này bằng quyền thường. " +
-                        "Hãy kết nối ADB một lần để cấp WRITE_SECURE_SETTINGS.")
+                        "Hãy cấp WRITE_SECURE_SETTINGS qua ADB/Shizuku một lần.")
                 return@thread
             }
             prefs.edit().putBoolean("guard_on", true).apply()
@@ -676,14 +630,22 @@ class MainActivity : Activity() {
             runOnUiThread { startGuard() }
             val mode = if (Guard.hasSecure(this)) "WRITE_SECURE_SETTINGS" else "Sửa đổi cài đặt hệ thống"
             log("✅ Đã bật tự động giữ (quyền: $mode).\n" +
-                    "• Ghi Millet no-restrict cho Google + app đã cấp + HH tool\n" +
-                    "• Bị ghi đè sẽ tự ghi lại và đá FCM\n" +
+                    "• Ghi Millet no-restrict cho Google + app đã ghim + HH tool\n" +
+                    "• Bị ghi đè hoặc bật màn hình sẽ tự ghi lại và đá FCM\n" +
                     "• Tự chạy lại sau khi khởi động máy\n\n" +
                     "Nên đặt HH tool ở chế độ pin Không giới hạn.")
         }
     }
 
-    // ---------- Millet ----------
+    private fun disableGuard() {
+        prefs.edit().putBoolean("guard_on", false).apply()
+        stopService(Intent(this, GuardService::class.java))
+        tvLog.text = "Đã tắt tự động giữ."
+    }
+
+    // ---------- Millet / FCM ----------
+    private val GMS = "com.google.android.gms"
+
     /** Thêm các gói vào danh sách MILLET_NO_RESTRICT_APP (HyperOS/MIUI), giữ nguyên các gói đã có. */
     private fun milletScript(pkgs: List<String>): String =
         "cur=\$(settings --user 0 get system MILLET_NO_RESTRICT_APP); " +
@@ -693,75 +655,83 @@ class MainActivity : Activity() {
         "settings --user 0 put system MILLET_NO_RESTRICT_APP \"\$cur\"; " +
         "echo \"MILLET_NO_RESTRICT_APP=\$(settings --user 0 get system MILLET_NO_RESTRICT_APP)\""
 
-    // ---------- Cấp quyền ----------
-    private data class GrantResult(val ok: Int, val total: Int, val skipped: String, val channel: String)
-
-    /** Cấp toàn bộ quyền cho một app (chạy trong thread nền). */
-    private fun grantOne(run: (String) -> String, app: AppItem): GrantResult {
-        val pkg = app.pkg
-        val cmds = mutableListOf<String>()
-        try {
-            packageManager.getPackageInfo(pkg, PackageManager.GET_PERMISSIONS)
-                .requestedPermissions?.forEach { cmds += "pm grant $pkg $it" }
-        } catch (e: Throwable) {}
-        appOps.forEach { cmds += "appops set $pkg $it allow" }
-        cmds += "dumpsys deviceidle whitelist +$pkg"
-
-        val script = cmds.joinToString("; ") { "echo \"@@ $it\"; $it 2>&1" }
-        val out = run(script)
-
-        var ok = 0
-        val sb = StringBuilder()
-        var cur: String? = null
-        val body = StringBuilder()
-        fun flush() {
-            val c = cur ?: return
-            val o = body.toString().trim()
-            if (o.isEmpty() || o.startsWith("Added")) ok++
-            else sb.append("• $c\n  → ${o.take(80)}\n")
-            body.setLength(0)
+    private fun fcmScript(pkg: String?): String {
+        val c = mutableListOf(
+            "am broadcast -a com.google.android.intent.action.GTALK_HEARTBEAT -p $GMS",
+            "am broadcast -a com.google.android.intent.action.MCS_HEARTBEAT -p $GMS",
+            "dumpsys deviceidle whitelist +$GMS",
+            "cmd appops set $GMS RUN_IN_BACKGROUND allow",
+            "cmd appops set $GMS RUN_ANY_IN_BACKGROUND allow",
+            "am set-standby-bucket $GMS active"
+        )
+        if (pkg != null) {
+            c += "am set-standby-bucket $pkg active"
+            c += "cmd package set-stopped-state --user 0 $pkg false"
         }
-        for (line in out.lines()) {
-            if (line.startsWith("@@ ")) { flush(); cur = line.substring(3) }
-            else body.append(line).append('\n')
-        }
-        flush()
-
-        val ch = try {
-            val uid = packageManager.getApplicationInfo(pkg, 0).uid
-            run("CLASSPATH=$packageCodePath app_process /system/bin " +
-                    "com.example.granter.ChannelFixer $pkg $uid 2>&1").trim()
-        } catch (e: Throwable) { "" }
-        return GrantResult(ok, cmds.size, sb.toString(), ch)
+        return c.joinToString("; ") { "$it >/dev/null 2>&1" } +
+                "; " + milletScript(listOfNotNull(pkg) + Guard.DEFAULT + packageName)
     }
 
-    private fun grantAll(app: AppItem) = grantMany(listOf(app))
-
-    /** Cấp quyền một lượt cho mọi app đã tích, ghi Millet một lần và nhớ chúng trong danh sách giữ. */
-    private fun grantMany(apps: List<AppItem>) {
-        tvLog.text = "Đang cấp quyền cho ${apps.size} ứng dụng...\n"
+    private fun milletOnly(app: AppItem) {
+        tvLog.text = "Đang ghi Millet cho ${app.label}...\n"
         thread {
             val run = backend() ?: return@thread
-            val done = StringBuilder()
-            var single: GrantResult? = null
-            apps.forEachIndexed { i, app ->
-                log("Đang cấp ${i + 1}/${apps.size}: ${app.label}\n\n$done")
-                val r = grantOne(run, app)
-                if (apps.size == 1) single = r
-                done.append("✅ ${app.label}: ${r.ok}/${r.total} lệnh OK\n")
-            }
-            val pkgs = apps.map { it.pkg }
-            val ml = run(milletScript(pkgs + Guard.DEFAULT + packageName)).trim()
-            addPinned(pkgs)   // Guard sẽ giữ các app này trong Millet
-            runOnUiThread { refreshPinned() }
+            val out = run(milletScript(listOf(app.pkg) + Guard.DEFAULT + packageName)).trim()
+            log("🛡 Millet: ${app.label}\n$out\n\n" +
+                    "Lưu ý: PowerKeeper có thể ghi đè danh sách này. Nếu mất, bấm lại.")
+        }
+    }
 
-            val r = single
-            if (r != null) {
-                log("✅ ${apps[0].label}: ${r.ok}/${r.total} lệnh OK\n🔔 ${r.channel.take(200)}\n🛡 ${ml.take(200)}\n\n" +
-                        "Lệnh bị bỏ qua (bình thường nếu quyền không áp dụng):\n${r.skipped}")
-            } else {
-                log("Đã cấp quyền cho ${apps.size} ứng dụng\n🛡 ${ml.take(200)}\n\n$done")
+    private fun kickFcm(pkg: String?) {
+        tvLog.text = "Đang đánh thức FCM...\n"
+        thread {
+            val run = backend() ?: return@thread
+            val out = run(fcmScript(pkg)).trim()
+            log("📡 Đã đánh thức FCM (Google Play services" +
+                    (if (pkg != null) " + $pkg" else "") + ")\n$out")
+        }
+    }
+
+    // ---------- Cấp quyền ----------
+    private fun grantAll(app: AppItem) {
+        tvLog.text = "Đang cấp quyền cho ${app.label}...\n"
+        thread {
+            val run = backend() ?: return@thread
+            val pkg = app.pkg
+            val cmds = mutableListOf<String>()
+            val info = packageManager.getPackageInfo(pkg, PackageManager.GET_PERMISSIONS)
+            info.requestedPermissions?.forEach { cmds += "pm grant $pkg $it" }
+            appOps.forEach { cmds += "appops set $pkg $it allow" }
+            cmds += "dumpsys deviceidle whitelist +$pkg"
+
+            val script = cmds.joinToString("; ") { "echo \"@@ $it\"; $it 2>&1" }
+            val out = run(script)
+
+            var ok = 0
+            val sb = StringBuilder()
+            var cur: String? = null
+            val body = StringBuilder()
+            fun flush() {
+                val c = cur ?: return
+                val o = body.toString().trim()
+                if (o.isEmpty() || o.startsWith("Added")) ok++
+                else sb.append("• $c\n  → ${o.take(80)}\n")
+                body.setLength(0)
             }
+            for (line in out.lines()) {
+                if (line.startsWith("@@ ")) { flush(); cur = line.substring(3) }
+                else body.append(line).append('\n')
+            }
+            flush()
+
+            val uid = packageManager.getApplicationInfo(pkg, 0).uid
+            val ch = run("CLASSPATH=$packageCodePath app_process /system/bin " +
+                    "com.example.granter.ChannelFixer $pkg $uid 2>&1").trim()
+
+            val ml = run(milletScript(listOf(pkg) + Guard.DEFAULT + packageName)).trim()
+
+            log("✅ ${app.label}: $ok/${cmds.size} lệnh OK\n🔔 ${ch.take(200)}\n🛡 ${ml.take(200)}\n\n" +
+                    "Lệnh bị bỏ qua (bình thường nếu quyền không áp dụng):\n$sb")
         }
     }
 
@@ -772,8 +742,13 @@ class MainActivity : Activity() {
     private fun isBank(a: AppItem) =
         bankKeys.any { a.pkg.lowercase().contains(it) || a.label.lowercase().contains(it) }
 
+    /** Google Play Services (và bản thay thế/đi kèm) cũng nằm trong danh sách một nhấn. */
+    private fun isGms(a: AppItem) =
+        a.pkg == GMS || a.pkg == "app.revanced.android.gms" || a.pkg == "com.google.android.gsf"
+
     private fun fixTargets(): List<AppItem> = all.filter {
-        it.pkg != packageName && (!it.system || it.pkg in socialPkgs) && (isSocial(it) || isBank(it))
+        it.pkg != packageName &&
+                (((!it.system || it.pkg in socialPkgs) && (isSocial(it) || isBank(it))) || isGms(it))
     }
 
     /** Android đã ghi nhận app "không tối ưu pin" (whitelist) chưa. */
@@ -795,7 +770,7 @@ class MainActivity : Activity() {
         if (n == 0) { toast("Không thấy ứng dụng mạng xã hội / ngân hàng nào"); return }
         android.app.AlertDialog.Builder(this)
             .setTitle("Cấp full quyền")
-            .setMessage("Sẽ cấp toàn bộ quyền (giống nút CẤP QUYỀN) cho $n ứng dụng mạng xã hội + ngân hàng, sửa thông báo, rồi bật tự động giữ Millet + FCM. Tiếp tục?")
+            .setMessage("Sẽ cấp toàn bộ quyền (giống nút CẤP QUYỀN) cho $n ứng dụng (mạng xã hội, ngân hàng và Google Play Services), sửa thông báo, rồi bật tự động giữ Millet + FCM. Tiếp tục?")
             .setPositiveButton("Cấp") { _, _ -> fixAll() }
             .setNegativeButton("Hủy", null)
             .show().also { styleDialog(it) }
