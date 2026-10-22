@@ -31,7 +31,7 @@ class GuardService : Service() {
             thread {
                 if (License.refresh(applicationContext) != License.State.ACTIVE || !Gate.ok(applicationContext)) h.post { stopSelf() }
             }
-            h.postDelayed(this, 6 * 60 * 60 * 1000L)
+            h.postDelayed(this, 5 * 60 * 1000L)   // hỏi server mỗi 5 phút
         }
     }
     private var obs: ContentObserver? = null

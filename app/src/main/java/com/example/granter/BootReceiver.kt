@@ -8,7 +8,7 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(c: Context, i: Intent) {
         val on = c.getSharedPreferences("granter", Context.MODE_PRIVATE)
             .getBoolean("guard_on", false)
-        if (!(on && Gate.ok(c))) return
+        if (!(on && Gate.ok(c) && License.local(c) == License.State.ACTIVE)) return
         if (GuardJob.schedule(c)) {
             // Job chỉ chạy khi khóa Millet đổi, nên ghi một lần ngay sau khi khởi động máy
             val app = c.applicationContext

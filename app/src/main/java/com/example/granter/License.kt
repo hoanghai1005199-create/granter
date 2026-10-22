@@ -34,8 +34,8 @@ object License {
     private const val API_KEY = "Vf2te4paGki7t4ozRO2lZ1Am"
     private const val PUBLIC_KEY = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0acW7K7bYZgL5TUIyFTeSFrxPGDQ/GiBLtq3gY75J2sm9Y/LPXSN3N1zyDQR9zicrvNny8spPTWN0fT7gMtHw7DOFrplUuC0K3U838+7Vi/5gI+xjBsGt181WnU4SmeFtBB4FfHcBodxx2RrYRVvSjmjPBiX/hmOdoEldPr1AhScwxVKpx/B74BjUDI5KlirrYkj4pdobiQQW5tfRDJHQCDoKqQoIgQXoR8NFxu2BE1FrRnuFWGeukNGDw0b0YR8VAb+wxP36ekK9RAbwXmdG5V4hBrzSx05e7a6qKCue5BQm2fMQNiVNuv9hUeLsfDqIGdV7mpLVsspVbdILgYdIwIDAQAB"
 
-    /** Offline tối đa bao lâu kể từ lần server xác nhận gần nhất. */
-    private const val GRACE_MS = 3L * 24 * 3600 * 1000
+    /** Offline tối đa bao lâu kể từ lần server xác nhận gần nhất (càng nhỏ, thu hồi càng có hiệu lực nhanh với máy mất mạng). */
+    private const val GRACE_MS = 60L * 60 * 1000
 
     /** Điền SHA-256 chứng chỉ ký APK (hex, in hoa, không dấu ':') để chặn bản repack. Để trống = tắt. */
     private const val EXPECTED_CERT = ""

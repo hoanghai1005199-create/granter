@@ -73,6 +73,7 @@ object Guard {
 
     /** Thêm các gói còn thiếu vào danh sách Millet, giữ nguyên gói đã có. */
     fun applyMillet(ctx: Context): Boolean {
+        if (License.local(ctx) != License.State.ACTIVE) { lastError = "Giấy phép không còn hiệu lực"; return false }
         if (applyDirect(ctx)) return true
         // Dự phòng: nhờ máy chủ shell ghi hộ (không cần quyền ghi cài đặt của app).
         return applyViaServer(ctx)
@@ -119,6 +120,7 @@ object Guard {
      * không thì nhờ máy chủ shell.
      */
     fun applyFreeze(ctx: Context) {
+        if (License.local(ctx) != License.State.ACTIVE) return
         val want = freezeWanted(ctx)
         if (!FreezeStore.applyDirect(ctx, want)) applyFreezeViaServer(ctx, want)
     }
@@ -127,6 +129,45 @@ object Guard {
         if (!HhServer.ping(ctx)) return
         val script = FreezeStore.script(ctx, want)
         if (script.isNotEmpty()) HhServer.exec(ctx, script)
+    }
+
+    private val SAFE_PKG = Regex("[A-Za-z0-9._]+")
+
+    /**
+     * Dọn khi bị thu hồi (gọi ở thread nền, KHÔNG bị chặn bởi giấy phép):
+     * 1. Gỡ khỏi Millet các gói app đã thêm (app đã ghim, đã sửa hàng loạt, chính HH tool).
+     *    Giữ nguyên nhóm gói mặc định của hệ thống (GMS...) vì có thể vốn đã có sẵn trên máy.
+     * 2. Thu lại WRITE_SECURE_SETTINGS qua máy chủ shell (cần máy chủ đang chạy).
+     * Chạy một lần cho mỗi lần bị thu hồi.
+     */
+    fun cleanup(ctx: Context) {
+        val app = ctx.applicationContext
+        val prefs = gp(app)
+        if (prefs.getBoolean("cleaned", false)) return
+        val remove = ((prefs.getStringSet("pinned", emptySet()) ?: emptySet()) +
+                (prefs.getStringSet("fixed", emptySet()) ?: emptySet()) + app.packageName)
+            .filter { SAFE_PKG.matches(it) }.toSet()
+
+        try {
+            val have = (Settings.System.getString(app.contentResolver, KEY) ?: "")
+                .split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            val keep = have.filter { it !in remove }
+            if (keep.size != have.size) {
+                val v = keep.joinToString(",")
+                val ok = try { Settings.System.putString(app.contentResolver, KEY, v) } catch (e: Throwable) { false }
+                if (!ok && HhServer.ping(app)) {
+                    HhServer.exec(app, "settings --user 0 put system $KEY \"$v\"")
+                }
+            }
+        } catch (e: Throwable) {}
+
+        // Đánh dấu xong trước khi thu quyền, vì thu quyền có thể làm hệ thống tắt tiến trình app
+        prefs.edit().putBoolean("cleaned", true).commit()
+        try {
+            if (hasSecure(app) && HhServer.ping(app)) {
+                HhServer.exec(app, "pm revoke ${app.packageName} android.permission.WRITE_SECURE_SETTINGS")
+            }
+        } catch (e: Throwable) {}
     }
 
     fun kickFcm(ctx: Context) {

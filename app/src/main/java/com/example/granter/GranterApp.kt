@@ -23,10 +23,14 @@ class GranterApp : Application() {
             try {
                 val on = ctx.getSharedPreferences("granter", Context.MODE_PRIVATE)
                     .getBoolean("guard_on", false)
-                if (on && Guard.canWrite(ctx) && Gate.ok(ctx) &&
-                    License.local(ctx) == License.State.ACTIVE) {
-                    Guard.fire(ctx, true)
+                if (!on) return@thread
+                // Hỏi server (tối đa 5 phút/lần) để bị thu hồi là dừng luôn, kể cả khi không mở app
+                if (License.refreshIfDue(ctx, 5 * 60_000L) != License.State.ACTIVE) {
+                    GuardJob.cancel(ctx)
+                    try { ctx.stopService(Intent(ctx, GuardService::class.java)) } catch (e: Throwable) {}
+                    return@thread
                 }
+                if (Guard.canWrite(ctx) && Gate.ok(ctx)) Guard.fire(ctx, true)
             } catch (e: Throwable) {}
         }
     }

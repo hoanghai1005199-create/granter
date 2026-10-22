@@ -11,6 +11,8 @@ import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.text.InputFilter
 import android.text.InputType
@@ -315,8 +317,54 @@ class MainActivity : Activity() {
         else "Đã chọn ${checked.size} ứng dụng (chạm vào đây để bỏ chọn hết)"
     }
 
+    // ---------- Theo dõi giấy phép khi đang mở app ----------
+    private val licH = Handler(Looper.getMainLooper())
+    private var licWatching = false
+    private val licPoll = object : Runnable {
+        override fun run() {
+            if (!licWatching) return
+            thread {
+                val s = License.refresh(applicationContext)
+                runOnUiThread {
+                    if (!licWatching) return@runOnUiThread
+                    if (s != License.State.ACTIVE) goLock()
+                    else licH.postDelayed(this, 20_000L)   // hỏi lại mỗi 20 giây
+                }
+            }
+        }
+    }
+
+    private fun startLicenseWatch() {
+        licWatching = true
+        licH.removeCallbacks(licPoll)
+        licH.post(licPoll)   // hỏi server ngay
+    }
+
+    private fun stopLicenseWatch() {
+        licWatching = false
+        licH.removeCallbacks(licPoll)
+    }
+
+    override fun onPause() {
+        stopLicenseWatch()
+        super.onPause()
+    }
+
+    /** Hết quyền: dừng mọi thứ chạy nền, xóa sạch màn hình cũ rồi mở màn hình khóa. */
     private fun goLock() {
-        startActivity(Intent(this, LockActivity::class.java))
+        stopLicenseWatch()
+        gateDialog?.let { try { it.dismiss() } catch (ignored: Throwable) {} }
+        gateDialog = null
+        try { stopDiscovery() } catch (ignored: Throwable) {}
+        try { GuardJob.cancel(this) } catch (ignored: Throwable) {}
+        try { stopService(Intent(this, GuardService::class.java)) } catch (ignored: Throwable) {}
+        val app = applicationContext
+        thread {
+            try { Guard.cleanup(app) } catch (ignored: Throwable) {}
+            try { if (HhServer.ping(app)) HhServer.stop(app) } catch (ignored: Throwable) {}
+        }
+        startActivity(Intent(this, LockActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
         finish()
     }
 
@@ -324,10 +372,9 @@ class MainActivity : Activity() {
         super.onResume()
         if (isFinishing) return
         if (License.local(this) != License.State.ACTIVE) { goLock(); return }
+        prefs.edit().putBoolean("cleaned", false).apply()
+        startLicenseWatch()
         if (!checkGate()) return
-        thread {
-            if (License.refreshIfDue(applicationContext) != License.State.ACTIVE) runOnUiThread { goLock() }
-        }
         updateStatus()
         if (prefs.getBoolean("guard_on", false) && Guard.canWrite(this)) startGuard()
         // Mở app là tự bật "Tự động giữ" (một lần cho mỗi lần mở, sau khi qua cổng điều kiện)
@@ -460,6 +507,7 @@ class MainActivity : Activity() {
 
     /** Trả về hàm chạy lệnh shell, hoặc null (đã ghi lý do vào log). Gọi trong thread nền. */
     private fun backend(): ((String) -> String)? {
+        if (License.local(this) != License.State.ACTIVE) { runOnUiThread { goLock() }; return null }
         if (shizukuAlive()) {
             if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
                 runOnUiThread {

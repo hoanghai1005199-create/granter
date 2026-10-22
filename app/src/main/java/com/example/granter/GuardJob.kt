@@ -22,7 +22,7 @@ class GuardJob : JobService() {
             var again = false
             try {
                 again = Gate.ok(ctx) &&
-                        License.refreshIfDue(ctx, 6 * 60 * 60 * 1000L) == License.State.ACTIVE
+                        License.refreshIfDue(ctx, 5 * 60 * 1000L) == License.State.ACTIVE
                 if (again) Guard.fire(ctx, log = true)
             } catch (e: Throwable) {
             } finally {
