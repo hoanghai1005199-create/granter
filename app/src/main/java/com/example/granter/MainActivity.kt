@@ -649,4 +649,531 @@ class MainActivity : Activity() {
                             etPort.setText(r.port.toString())
                             etCode.requestFocus()
                         }
-                        Notif.askCode(this@MainActivity, host
+                        Notif.askCode(this@MainActivity, host, r.port)
+                        val split = Build.VERSION.SDK_INT >= 24 && isInMultiWindowMode
+                        if (canOverlay && !split) PairOverlay.show(applicationContext, host, r.port)
+                        log("Đã thấy cổng ghép nối ${r.port}. Gõ mã 6 số vào ô ở đầu màn hình HH tool.")
+                        stopDiscovery()
+                    }
+                })
+            }
+        }
+        nsdListener = l
+        try {
+            nsd.discoverServices("_adb-tls-pairing._tcp", NsdManager.PROTOCOL_DNS_SD, l)
+        } catch (e: Exception) { log("Không dò được: ${e.message}") }
+        try {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT))
+        } catch (ignored: Exception) {}
+    }
+
+    private fun doPairInline() {
+        val code = etCode.text.toString().trim()
+        val port = etPort.text.toString().trim().toIntOrNull()
+        val host = pairHost.ifEmpty { "127.0.0.1" }
+        if (code.length != 6) { toast("Cần đủ 6 số"); return }
+        if (port == null || port < 1024) { toast("Nhập cổng đúng"); return }
+        tvLog.text = "Đang ghép nối...\n"
+        thread {
+            val ok = AdbBackend.pair(applicationContext, host, port, code)
+            if (!ok) {
+                log("❌ Ghép nối thất bại: ${AdbBackend.lastError}\n" +
+                    "Mã và cổng đổi mỗi lần mở hộp. Bấm lại Ghép nối ADB rồi nhập mã mới.")
+                return@thread
+            }
+            val conn = AdbBackend.ensureConnected(applicationContext)
+            log(if (conn) "✅ Ghép nối và kết nối thành công"
+                else "Đã ghép nối. Bấm KẾT NỐI ADB")
+            runOnUiThread { pairBox.visibility = View.GONE; etCode.setText("") }
+            updateStatus()
+        }
+    }
+
+    private fun stopDiscovery() {
+        val l = nsdListener ?: return
+        nsdListener = null
+        try { (getSystemService(NSD_SERVICE) as NsdManager).stopServiceDiscovery(l) } catch (ignored: Exception) {}
+    }
+
+    private fun rememberGranted(pkgs: List<String>) {
+        val set = prefs.getStringSet("pinned", emptySet())!!.toMutableSet()
+        set.addAll(pkgs)
+        prefs.edit().putStringSet("pinned", set).apply()
+    }
+
+    private fun forgetGranted(pkg: String) {
+        val set = prefs.getStringSet("pinned", emptySet())!!.toMutableSet()
+        set.remove(pkg)
+        prefs.edit().putStringSet("pinned", set).apply()
+        refreshPinned()
+    }
+
+    private fun refreshPinned() {
+        pinnedBox.removeAllViews()
+        val set = prefs.getStringSet("pinned", emptySet())!!
+        all.filter { it.pkg in set }.forEach { app ->
+            pinnedBox.addView(blueButton("⚡ ${app.label}") { grantMany(listOf(app), remember = false) }.apply {
+                background = shape(BLUE, false); stateListAnimator = null
+                setOnLongClickListener { forgetGranted(app.pkg); toast("Đã bỏ ${app.label} khỏi danh sách"); true }
+            })
+        }
+    }
+
+    private fun startGuard() {
+        if (!Gate.ok(this)) return
+        if (GuardJob.schedule(this)) {
+            try { stopService(Intent(this, GuardService::class.java)) } catch (e: Exception) {}
+        } else {
+            try { startForegroundService(Intent(this, GuardService::class.java)) } catch (e: Exception) {}
+        }
+    }
+
+    private fun freezerInfo(): String {
+        val key = "cloud_memory_freeze_whitelist"
+        val sb = StringBuilder("\n❄ $key:\n")
+        val tables = listOf(
+            "system" to { Settings.System.getString(contentResolver, key) },
+            "global" to { Settings.Global.getString(contentResolver, key) },
+            "secure" to { Settings.Secure.getString(contentResolver, key) })
+        for ((name, get) in tables) {
+            val v = try { get() } catch (e: Throwable) { "(lỗi: ${e.message})" }
+            sb.append("• $name: ").append(if (v.isNullOrEmpty()) "(không có)" else v).append("\n")
+        }
+        val ex = FreezeStore.extra(this); val xc = FreezeStore.exclude(this)
+        if (ex.isNotEmpty()) sb.append("➕ thêm tay: ").append(ex.sorted().joinToString(", ")).append("\n")
+        if (xc.isNotEmpty()) sb.append("🚫 loại trừ: ").append(xc.sorted().joinToString(", ")).append("\n")
+        return sb.toString()
+    }
+
+    private fun showMillet() {
+        val raw = try { Settings.System.getString(contentResolver, Guard.KEY) } catch (e: Throwable) { null }
+        val list = (raw ?: "").split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        if (list.isEmpty()) {
+            tvLog.text = "MILLET_NO_RESTRICT_APP đang trống (hoặc không đọc được).\n" +
+                    "Có thể PowerKeeper đã xóa. Mở lại app để tự ghi lại." + freezerInfo()
+            return
+        }
+        val want = Guard.wanted(this).toSet()
+        val sb = StringBuilder("Millet đang có ${list.size} gói:\n\n")
+        for (pkg in list) {
+            val label = try {
+                packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+            } catch (e: Exception) { null }
+            val tag = if (pkg in want) "🛡" else "•"
+            sb.append("$tag ${label ?: "(chưa cài)"}\n   $pkg\n")
+        }
+        val missing = want.filter { it !in list }
+        if (missing.isNotEmpty()) {
+            sb.append("\n⚠ Đang thiếu so với danh sách cần giữ:\n")
+            missing.forEach { sb.append("   $it\n") }
+        }
+        sb.append("\n🛡 = gói Granter giữ (mặc định, đã ghim, đã sửa)")
+        sb.append(freezerInfo())
+        tvLog.text = sb.toString()
+    }
+
+    private fun showFreezeManager() {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), 0)
+        }
+        val et = EditText(this).apply {
+            hint = "com.example.app"; setSingleLine(); setTextColor(DARK)
+        }
+        fun title(t: String) = TextView(this).apply {
+            text = t; textSize = 14f; setTextColor(ACCENT_TEXT)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            setPadding(0, dp(14), 0, dp(4))
+        }
+        fun section(head: String, items: Set<String>, onRemove: (String) -> Unit) {
+            box.addView(title(head))
+            if (items.isEmpty()) box.addView(TextView(this).apply { text = "(trống)"; setTextColor(DARK) })
+            items.sorted().forEach { p ->
+                box.addView(TextView(this).apply {
+                    text = "✕  $p"; textSize = 14f; setTextColor(DARK)
+                    setPadding(0, dp(8), 0, dp(8))
+                    setOnClickListener { onRemove(p) }
+                })
+            }
+        }
+        fun render() {
+            box.removeAllViews()
+            val extra = FreezeStore.extra(this)
+            val ex = FreezeStore.exclude(this)
+            box.addView(TextView(this).apply {
+                text = "Luôn có: ${FreezeStore.REQUIRED.joinToString(", ")} (không loại trừ được)"
+                textSize = 13f; setTextColor(DARK)
+            })
+            section("Gói thêm tay (luôn nối vào), chạm để bỏ", extra) {
+                FreezeStore.save(this, extra - it, ex); render()
+            }
+            section("Loại trừ (luôn gỡ, không nối lại), chạm để bỏ", ex) {
+                FreezeStore.save(this, extra, ex - it); render()
+            }
+            box.addView(title("Thêm gói"))
+            (et.parent as? ViewGroup)?.removeView(et)
+            box.addView(et)
+        }
+        fun add(toExclude: Boolean) {
+            val p = et.text.toString().trim()
+            if (!FreezeStore.isValid(p)) { toast("Tên gói không hợp lệ"); return }
+            val extra = FreezeStore.extra(this)
+            val ex = FreezeStore.exclude(this)
+            if (toExclude) {
+                if (p in FreezeStore.REQUIRED) { toast("GMS và Zalo bắt buộc giữ"); return }
+                FreezeStore.save(this, extra - p, ex + p)
+            } else {
+                FreezeStore.save(this, extra + p, ex - p)
+            }
+            et.setText(""); render()
+        }
+        render()
+        val btns = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(blueButton("Thêm vào giữ") { add(false) }.apply {
+                layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
+            addView(blueButton("Loại trừ") { add(true) }.apply {
+                layoutParams = LinearLayout.LayoutParams(0, -2, 1f) })
+        }
+        val outer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(ScrollView(this@MainActivity).apply {
+                layoutParams = LinearLayout.LayoutParams(-1, 0, 1f); addView(box)
+            })
+            addView(btns)
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Danh sách freeze")
+            .setView(outer)
+            .setPositiveButton("Áp dụng ngay") { _, _ ->
+                tvLog.text = "Đang cập nhật danh sách freeze...\n"
+                thread {
+                    try { Guard.applyFreeze(this) } catch (e: Throwable) {}
+                    log("Đã cập nhật.\n" + freezerInfo())
+                }
+            }
+            .setNegativeButton("Đóng", null)
+            .show().also { styleDialog(it) }
+    }
+
+    private fun fmtDur(ms: Long): String {
+        val s = ms / 1000
+        return when {
+            s < 60 -> "$s giây"
+            s < 3600 -> "${s / 60} phút"
+            else -> "${s / 3600} giờ ${(s % 3600) / 60} phút"
+        }
+    }
+
+    private fun showOverrideLog() {
+        val log = Guard.overrideLog(this).reversed()
+        val fmt = java.text.SimpleDateFormat("EEE dd/MM HH:mm:ss", java.util.Locale("vi"))
+        val sb = StringBuilder()
+        if (log.isEmpty()) {
+            sb.append("Chưa ghi nhận lần ghi đè nào.\n\nMỗi khi hệ thống ghi đè Millet hoặc danh sách freeze và app nối lại, giờ sẽ được lưu ở đây (cần bật Tự động giữ).")
+        } else {
+            val gaps = log.map { it.first }.sorted().zipWithNext { a, b -> b - a }
+            sb.append("Tổng ${log.size} lần (giữ tối đa 100)\n")
+            if (gaps.isNotEmpty()) sb.append("Trung bình ${fmtDur(gaps.average().toLong())} một lần\n")
+            sb.append("\n")
+            log.take(40).forEach { sb.append("• ${fmt.format(java.util.Date(it.first))}  ${it.second}\n") }
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Nhật ký ghi đè")
+            .setMessage(sb.toString())
+            .setPositiveButton("Đóng", null)
+            .setNegativeButton("Xóa nhật ký") { _, _ -> Guard.clearOverrideLog(this); updateStatus() }
+            .show().also { styleDialog(it) }
+    }
+
+    private val REQ_EXPORT = 4101
+    private val REQ_IMPORT = 4102
+
+    private fun showBackupMenu() {
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Sao lưu / khôi phục")
+            .setItems(arrayOf("Sao lưu ra file", "Khôi phục từ file (thay thế cấu hình hiện tại)")) { _, i ->
+                try {
+                    if (i == 0) startActivityForResult(
+                        Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+                            .setType("application/json").putExtra(Intent.EXTRA_TITLE, "granter-backup.json"),
+                        REQ_EXPORT)
+                    else startActivityForResult(
+                        Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+                            .setType("*/*"), REQ_IMPORT)
+                } catch (e: Exception) { toast("Không mở được trình chọn file") }
+            }
+            .setNegativeButton("Hủy", null)
+            .show().also { styleDialog(it) }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        when (requestCode) {
+            REQ_EXPORT -> exportConfig(uri)
+            REQ_IMPORT -> importConfig(uri)
+        }
+    }
+
+    private fun exportConfig(uri: android.net.Uri) {
+        thread {
+            try {
+                val j = org.json.JSONObject()
+                j.put("app", "granter")
+                j.put("version", 1)
+                j.put("pinned", org.json.JSONArray(prefs.getStringSet("pinned", emptySet())!!.sorted()))
+                j.put("fixed", org.json.JSONArray(prefs.getStringSet("fixed", emptySet())!!.sorted()))
+                j.put("freeze_extra", org.json.JSONArray(FreezeStore.extra(this).sorted()))
+                j.put("freeze_exclude", org.json.JSONArray(FreezeStore.exclude(this).sorted()))
+                contentResolver.openOutputStream(uri, "wt")!!.use { it.write(j.toString(2).toByteArray(Charsets.UTF_8)) }
+                log("✅ Đã sao lưu: ${prefs.getStringSet("pinned", emptySet())!!.size} app đã cấp, " +
+                        "${FreezeStore.extra(this).size} gói thêm tay, ${FreezeStore.exclude(this).size} gói loại trừ.")
+            } catch (e: Throwable) { log("❌ Sao lưu lỗi: ${e.message}") }
+        }
+    }
+
+    private fun importConfig(uri: android.net.Uri) {
+        thread {
+            try {
+                val bytes = contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                if (bytes.size > 512 * 1024) { log("❌ File quá lớn, không phải bản sao lưu Granter."); return@thread }
+                val j = org.json.JSONObject(String(bytes, Charsets.UTF_8))
+                if (j.optString("app") != "granter" || j.optInt("version", 0) != 1) {
+                    log("❌ File không phải bản sao lưu Granter."); return@thread
+                }
+                fun arr(k: String): Set<String> {
+                    val a = j.optJSONArray(k) ?: return emptySet()
+                    return (0 until a.length()).map { a.optString(it) }.filter { FreezeStore.isValid(it) }.toSet()
+                }
+                val pinned = arr("pinned"); val fixed = arr("fixed")
+                val extra = arr("freeze_extra"); val exclude = arr("freeze_exclude")
+                prefs.edit().putStringSet("pinned", pinned).putStringSet("fixed", fixed).apply()
+                FreezeStore.save(this, extra, exclude)
+                try { Guard.applyFreeze(this) } catch (e: Throwable) {}
+                runOnUiThread { refreshPinned() }
+                updateStatus()
+                log("✅ Đã khôi phục: ${pinned.size} app đã cấp, ${fixed.size} app sửa hàng loạt, " +
+                        "${extra.size} gói thêm tay, ${exclude.size} gói loại trừ.\n" +
+                        "Lưu ý: quyền của từng app chưa được cấp lại, bấm ⚡ ở từng app (hoặc Cấp full quyền).")
+            } catch (e: Throwable) { log("❌ Khôi phục lỗi: ${e.message}") }
+        }
+    }
+
+    private fun openWriteSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS,
+                android.net.Uri.parse("package:$packageName")))
+        } catch (e: Exception) { toast("Không mở được trang cấp quyền") }
+    }
+
+    private fun enableGuard(auto: Boolean = false) {
+        tvLog.text = "Đang bật tự động giữ...\n"
+        thread {
+            if (!Guard.hasSecure(this) && (shizukuAlive() || HhServer.ping(this) || AdbBackend.isConnected(this))) {
+                val run = backend()
+                run?.invoke("pm grant $packageName android.permission.WRITE_SECURE_SETTINGS")
+            }
+            if (!Guard.canWrite(this) && !HhServer.ping(this)) {
+                if (auto) {
+                    log("Tự động giữ chưa bật được: chưa có quyền ghi cài đặt.\n" +
+                            "Bật Máy chủ shell (hoặc Kết nối ADB) rồi bấm ⚡ Cấp full quyền, từ sau mở app là tự chạy.")
+                    return@thread
+                }
+                runOnUiThread { openWriteSettings() }
+                log("Cần bật quyền \"Sửa đổi cài đặt hệ thống\" cho HH tool.\n" +
+                        "Đã mở trang cấp quyền: bật xong thì quay lại app (tự động giữ sẽ tự bật).\n" +
+                        "(Không cần bật gỡ lỗi USB.)")
+                return@thread
+            }
+            if (!Guard.applyMillet(this)) {
+                log("Có quyền nhưng không ghi được MILLET_NO_RESTRICT_APP.\n" +
+                        "Lỗi thật: ${Guard.lastError}\n" +
+                        "WRITE_SECURE_SETTINGS=${Guard.hasSecure(this)}, WRITE_SETTINGS=${Guard.hasWriteSettings(this)}\n" +
+                        "Có thể HyperOS chặn ghi khóa này bằng quyền thường. " +
+                        "Hãy cấp WRITE_SECURE_SETTINGS qua ADB/Shizuku một lần.")
+                return@thread
+            }
+            prefs.edit().putBoolean("guard_on", true).apply()
+            Guard.fire(this)
+            runOnUiThread { startGuard() }
+            val mode = if (Guard.hasSecure(this)) "WRITE_SECURE_SETTINGS" else "Sửa đổi cài đặt hệ thống"
+            log("✅ Đã bật tự động giữ (quyền: $mode).\n" +
+                    "• Ghi Millet no-restrict cho Google + app đã ghim + HH tool\n" +
+                    "• Bị ghi đè sẽ tự ghi lại và đá FCM (" +
+                    (if (GuardJob.supported() && GuardJob.schedule(applicationContext))
+                        "hệ thống tự gọi app, không có thông báo chạy nền ✅"
+                    else "dịch vụ nền có thông báo") + ")\n" +
+                    "• Tự chạy lại sau khi khởi động máy\n\n" +
+                    "Nên đặt HH tool ở chế độ pin Không giới hạn.")
+        }
+    }
+
+    private val GMS = "com.google.android.gms"
+
+    private fun milletScript(pkgs: List<String>): String =
+        "cur=\$(settings --user 0 get system MILLET_NO_RESTRICT_APP); " +
+        "[ \"\$cur\" = null ] && cur=''; " +
+        "for p in ${pkgs.joinToString(" ")}; do " +
+        "case \",\$cur,\" in *\",\$p,\"*) ;; *) cur=\"\${cur:+\$cur,}\$p\";; esac; done; " +
+        "settings --user 0 put system MILLET_NO_RESTRICT_APP \"\$cur\"; " +
+        FreezeStore.script(this, Guard.freezeWanted(this)) +
+        "echo \"MILLET_NO_RESTRICT_APP=\$(settings --user 0 get system MILLET_NO_RESTRICT_APP)\""
+
+    private fun grantChecked() {
+        val apps = all.filter { it.pkg in checked }
+        if (apps.isEmpty()) { toast("Hãy tích chọn ít nhất 1 ứng dụng"); return }
+        grantMany(apps, remember = true)
+    }
+
+    private fun grantMany(apps: List<AppItem>, remember: Boolean) {
+        tvLog.text = "Đang cấp quyền cho ${apps.size} ứng dụng...\n"
+        thread {
+            val run = backend() ?: return@thread
+            val report = StringBuilder()
+            apps.forEachIndexed { i, app ->
+                log("Đang cấp ${i + 1}/${apps.size}: ${app.label}\n\n$report")
+                report.append(grantOne(app, run)).append("\n")
+            }
+            if (remember) {
+                rememberGranted(apps.map { it.pkg })
+                runOnUiThread { refreshPinned() }
+            }
+            log(report.toString())
+        }
+    }
+
+    private fun grantOne(app: AppItem, run: (String) -> String): String {
+        val pkg = app.pkg
+        val cmds = mutableListOf<String>()
+        try {
+            packageManager.getPackageInfo(pkg, PackageManager.GET_PERMISSIONS)
+                .requestedPermissions?.forEach {
+                    if (it !in DANGEROUS_PERMS) cmds += "pm grant $pkg $it"
+                }
+        } catch (e: Throwable) {}
+        appOps.forEach { cmds += "appops set $pkg $it allow" }
+        cmds += "dumpsys deviceidle whitelist +$pkg"
+
+        val script = cmds.joinToString("; ") { "echo \"@@ $it\"; $it 2>&1" }
+        val out = run(script)
+
+        var ok = 0
+        val sb = StringBuilder()
+        var cur: String? = null
+        val body = StringBuilder()
+        fun flush() {
+            val c = cur ?: return
+            val o = body.toString().trim()
+            if (o.isEmpty() || o.startsWith("Added")) ok++
+            else sb.append("• $c\n  → ${o.take(80)}\n")
+            body.setLength(0)
+        }
+        for (line in out.lines()) {
+            if (line.startsWith("@@ ")) { flush(); cur = line.substring(3) }
+            else body.append(line).append('\n')
+        }
+        flush()
+
+        val uid = try { packageManager.getApplicationInfo(pkg, 0).uid } catch (e: Throwable) { -1 }
+        val ch = run("CLASSPATH=$packageCodePath app_process /system/bin " +
+                "com.example.granter.ChannelFixer $pkg $uid 2>&1").trim()
+        val ml = run(milletScript(listOf(pkg) + Guard.DEFAULT + packageName)).trim()
+
+        return "✅ ${app.label}: $ok/${cmds.size} lệnh OK\n🔔 ${ch.take(200)}\n🛡 ${ml.take(200)}\n" +
+                (if (sb.isNotEmpty()) "Lệnh bị bỏ qua (bình thường nếu quyền không áp dụng):\n$sb" else "")
+    }
+
+    private fun isSocial(a: AppItem) =
+        a.category == ApplicationInfo.CATEGORY_SOCIAL || a.pkg in socialPkgs
+
+    private fun isBank(a: AppItem) =
+        bankKeys.any { normalize(a.pkg).contains(it) || normalize(a.label).contains(it) }
+
+    private fun isGms(a: AppItem) =
+        a.pkg == GMS || a.pkg == "app.revanced.android.gms" || a.pkg == "com.google.android.gsf"
+
+    private fun fixTargets(): List<AppItem> = all.filter {
+        it.pkg != packageName &&
+                (((!it.system || it.pkg in socialPkgs) && (isSocial(it) || isBank(it))) || isGms(it))
+    }
+
+    private fun batteryFree(pkg: String): Boolean = try {
+        (getSystemService(POWER_SERVICE) as android.os.PowerManager).isIgnoringBatteryOptimizations(pkg)
+    } catch (e: Throwable) { false }
+
+    private fun autoStartOk(pkg: String): Int = try {
+        val ops = getSystemService(APP_OPS_SERVICE) as android.app.AppOpsManager
+        val uid = packageManager.getApplicationInfo(pkg, 0).uid
+        val m = android.app.AppOpsManager::class.java.getMethod("checkOpNoThrow",
+            Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, String::class.java)
+        if ((m.invoke(ops, 10008, uid, pkg) as Int) == 0) 1 else 0
+    } catch (e: Throwable) { -1 }
+
+    private fun confirmFixAll() {
+        val n = fixTargets().size
+        if (n == 0) { toast("Không thấy ứng dụng mạng xã hội / ngân hàng nào"); return }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Cấp full quyền")
+            .setMessage("Sẽ cấp toàn bộ quyền (giống nút CẤP QUYỀN) cho $n ứng dụng (mạng xã hội, ngân hàng và Google Play Services), sửa thông báo, rồi bật tự động giữ Millet + FCM. Tiếp tục?")
+            .setPositiveButton("Cấp") { _, _ -> fixAll() }
+            .setNegativeButton("Hủy", null)
+            .show().also { styleDialog(it) }
+    }
+
+    private fun fixAll() {
+        val targets = fixTargets()
+        tvLog.text = "Đang sửa ${targets.size} ứng dụng...\n"
+        thread {
+            val run = backend() ?: return@thread
+            val done = StringBuilder()
+            targets.forEachIndexed { i, app ->
+                log("Đang sửa ${i + 1}/${targets.size}: ${app.label}\n\n$done")
+                val pkg = app.pkg
+                val cmds = mutableListOf<String>()
+                try {
+                    packageManager.getPackageInfo(pkg, PackageManager.GET_PERMISSIONS)
+                        .requestedPermissions?.forEach {
+                            if (it !in DANGEROUS_PERMS) cmds += "pm grant $pkg $it"
+                        }
+                } catch (e: Throwable) {}
+                appOps.forEach { cmds += "appops set $pkg $it allow" }
+                cmds += "dumpsys deviceidle whitelist +$pkg"
+                cmds += "cmd deviceidle whitelist +$pkg"
+                cmds += "am set-standby-bucket $pkg active"
+                cmds += "cmd package set-stopped-state --user 0 $pkg false"
+                run(cmds.joinToString("; ") { "$it >/dev/null 2>&1" })
+                try {
+                    val uid = packageManager.getApplicationInfo(pkg, 0).uid
+                    run("CLASSPATH=$packageCodePath app_process /system/bin " +
+                            "com.example.granter.ChannelFixer $pkg $uid 2>&1")
+                } catch (e: Throwable) {}
+                val bat = if (batteryFree(pkg)) "✔" else "✘"
+                val au = when (autoStartOk(pkg)) { 1 -> "✔"; 0 -> "✘"; else -> "?" }
+                done.append("${app.label}  | pin: $bat  | tự khởi chạy: $au\n")
+            }
+            val pkgs = targets.map { it.pkg }
+            val ml = run(milletScript(pkgs + Guard.DEFAULT + packageName)).trim()
+            val fixed = prefs.getStringSet("fixed", emptySet())!!.toMutableSet()
+            fixed.addAll(pkgs)
+            prefs.edit().putStringSet("fixed", fixed).apply()
+            
+            if (!Guard.canWrite(this)) run("pm grant $packageName android.permission.WRITE_SECURE_SETTINGS")
+            val guardOn = Guard.canWrite(this)
+            if (guardOn) {
+                prefs.edit().putBoolean("guard_on", true).apply()
+                Guard.fire(this)
+                runOnUiThread { startGuard() }
+            }
+            log("✅ Đã sửa ${targets.size} ứng dụng\n🛡 ${ml.take(200)}\n" +
+                    (if (guardOn) "🔒 Đã bật tự động giữ Millet + FCM\n\n"
+                    else "⚠ Chưa bật được tự động giữ (thiếu quyền ghi cài đặt hệ thống). Bật Máy chủ shell hoặc Kết nối ADB rồi mở lại app.\n\n") +
+                    done)
+        }
+    }
+
+    private fun log(s: String) = runOnUiThread { tvLog.text = s }
+    private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
+}
