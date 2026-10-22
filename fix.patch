@@ -1,0 +1,190 @@
+--- a/app/src/main/java/com/example/granter/License.kt
++++ b/app/src/main/java/com/example/granter/License.kt
+@@ -110,6 +110,22 @@ object License {
+         return "HT-${hex.substring(0, 4)}-${hex.substring(4, 8)}-${hex.substring(8, 12)}"
+     }
+ 
++    private val lastLocal = java.util.concurrent.atomic.AtomicLong(0)
++    private val lastLocalState = java.util.concurrent.atomic.AtomicReference(State.OFFLINE)
++    private const val LOCAL_CACHE_MS = 8000L
++
++    /** Cache nhẹ: gọi nhiều lần trong 8s không verify lại. */
++    fun localCached(c: Context): State {
++        val now = SystemClock.elapsedRealtime()
++        val last = lastLocal.get()
++        if (now - last in 0 until LOCAL_CACHE_MS) {
++            return lastLocalState.get()!!
++        }
++        val s = local(c)
++        lastLocal.set(now)
++        lastLocalState.set(s)
++        return s
++    }
++
+     private fun fallbackId(c: Context): String {
+         val p = sp(c)
+         return p.getString("uid", null) ?: UUID.randomUUID().toString().also {
+--- a/app/src/main/java/com/example/granter/GranterApp.kt
++++ b/app/src/main/java/com/example/granter/GranterApp.kt
+@@ -4,6 +4,8 @@ import android.app.Application
+ import android.content.BroadcastReceiver
+ import android.content.Context
+ import android.content.Intent
+ import android.content.IntentFilter
++import android.os.Build
+ import android.os.Handler
+ import android.os.Looper
+ import kotlin.concurrent.thread
+@@ -16,6 +18,7 @@ import kotlin.concurrent.thread
+ class GranterApp : Application() {
+ 
+     private val h = Handler(Looper.getMainLooper())
++    private val running = java.util.concurrent.atomic.AtomicBoolean(false)
+     private val task = Runnable {
+         val ctx = applicationContext
+         thread {
+@@ -52,7 +55,18 @@ class GranterApp : Application() {
+     override fun onCreate() {
+         super.onCreate()
+         try {
+-            registerReceiver(screenReceiver, IntentFilter().apply {
++            val filter = IntentFilter().apply {
+                 addAction(Intent.ACTION_SCREEN_ON)
+                 addAction(Intent.ACTION_SCREEN_OFF)
+-            })
++            }
++            if (Build.VERSION.SDK_INT >= 33) {
++                registerReceiver(screenReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
++            } else {
++                @Suppress("UnspecifiedRegisterReceiverFlag")
++                registerReceiver(screenReceiver, filter)
++            }
+         } catch (e: Throwable) {}
+     }
+ }
+--- a/app/src/main/java/com/example/granter/Guard.kt
++++ b/app/src/main/java/com/example/granter/Guard.kt
+@@ -52,7 +52,7 @@ object Guard {
+     /** Thêm các gói còn thiếu vào danh sách Millet, giữ nguyên gói đã có. */
+     fun applyMillet(ctx: Context): Boolean {
+-        if (License.local(ctx) != License.State.ACTIVE) { lastError = "Giấy phép không còn hiệu lực"; return false }
++        if (License.localCached(ctx) != License.State.ACTIVE) { lastError = "Giấy phép không còn hiệu lực"; return false }
+         if (applyDirect(ctx)) return true
+         // Dự phòng: nhờ máy chủ shell ghi hộ (không cần quyền ghi cài đặt của app).
+         return applyViaServer(ctx)
+@@ -145,7 +145,7 @@ object Guard {
+     fun applyFreeze(ctx: Context) {
+-        if (License.local(ctx) != License.State.ACTIVE) return
++        if (License.localCached(ctx) != License.State.ACTIVE) return
+         val want = freezeWanted(ctx)
+         if (!FreezeStore.applyDirect(ctx, want)) applyFreezeViaServer(ctx, want)
+     }
+@@ -165,7 +165,7 @@ object Guard {
+-        prefs.edit().putBoolean("cleaned", true).commit()
++        prefs.edit().putBoolean("cleaned", true).apply()
+         try {
+             if (hasSecure(app) && HhServer.ping(app)) {
+                 HhServer.exec(app, "pm revoke ${app.packageName} android.permission.WRITE_SECURE_SETTINGS")
+@@ -225,7 +225,7 @@ object Guard {
+     /** log = true: lần chạy này do hệ thống đổi khóa (không phải mở app/khởi động), ghi nhật ký nếu có ghi đè. */
+     fun fire(ctx: Context, log: Boolean = false) {
+-        if (License.local(ctx) != License.State.ACTIVE) return
++        if (License.localCached(ctx) != License.State.ACTIVE) return
+         if (log) {
+             try {
+                 val m = milletMissing(ctx)
+--- a/app/src/main/java/com/example/granter/GuardService.kt
++++ b/app/src/main/java/com/example/granter/GuardService.kt
+@@ -25,7 +25,7 @@ class GuardService : Service() {
+     private val licTask = object : Runnable {
+         override fun run() {
+             thread {
+-                if (License.refresh(applicationContext) != License.State.ACTIVE || !Gate.ok(applicationContext)) h.post { stopSelf() }
++                if (License.refreshIfDue(applicationContext, 5 * 60_000L) != License.State.ACTIVE || !Gate.ok(applicationContext)) h.post { stopSelf() }
+             }
+             h.postDelayed(this, 5 * 60 * 1000L)   // hỏi server mỗi 5 phút
+         }
+@@ -55,7 +55,7 @@ class GuardService : Service() {
+-        if (License.local(this) != License.State.ACTIVE) { stopSelf(); return START_NOT_STICKY }
++        if (License.localCached(this) != License.State.ACTIVE) { stopSelf(); return START_NOT_STICKY }
+         if (!Gate.ok(this)) { stopSelf(); return START_NOT_STICKY }
+         h.removeCallbacks(licTask)
+         h.post(licTask)
+--- a/app/src/main/java/com/example/granter/BootReceiver.kt
++++ b/app/src/main/java/com/example/granter/BootReceiver.kt
+@@ -8,13 +8,15 @@ class BootReceiver : BroadcastReceiver() {
+     override fun onReceive(c: Context, i: Intent) {
+         val on = c.getSharedPreferences("granter", Context.MODE_PRIVATE)
+             .getBoolean("guard_on", false)
+-        if (!(on && Gate.ok(c) && License.local(c) == License.State.ACTIVE)) return
++        if (!(on && Gate.ok(c) && License.localCached(c) == License.State.ACTIVE)) return
+         if (GuardJob.schedule(c)) {
+             // Job chỉ chạy khi khóa Millet đổi, nên ghi một lần ngay sau khi khởi động máy
+             val app = c.applicationContext
+             val pr = goAsync()
+             Thread {
+-                try { Guard.fire(app) } catch (e: Throwable) {}
+-                pr.finish()
+-            }.start()
++                try { Guard.fire(app) } catch (e: Throwable) {
++                } finally {
++                    try { pr.finish() } catch (ignored: Throwable) {}
++                }
++            }.apply { isDaemon = true; start() }
+         } else {
+             try { c.startForegroundService(Intent(c, GuardService::class.java)) } catch (e: Throwable) {}
+         }
+--- a/app/src/main/java/com/example/granter/MainActivity.kt
++++ b/app/src/main/java/com/example/granter/MainActivity.kt
+@@ -48,6 +48,38 @@ class MainActivity : Activity() {
+     private val prefs by lazy { getSharedPreferences("granter", MODE_PRIVATE) }
+     private var nsdListener: NsdManager.DiscoveryListener? = null
+     private lateinit var pairBox: LinearLayout
++    
++    private val DANGEROUS_PERMS = setOf(
++        "android.permission.READ_SMS", "android.permission.SEND_SMS",
++        "android.permission.RECEIVE_SMS", "android.permission.RECEIVE_MMS",
++        "android.permission.RECEIVE_WAP_PUSH",
++        "android.permission.READ_CALL_LOG", "android.permission.WRITE_CALL_LOG",
++        "android.permission.CALL_PHONE", "android.permission.ANSWER_PHONE_CALLS",
++        "android.permission.PROCESS_OUTGOING_CALLS",
++        "android.permission.READ_CONTACTS", "android.permission.WRITE_CONTACTS",
++        "android.permission.GET_ACCOUNTS",
++        "android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_COARSE_LOCATION",
++        "android.permission.ACCESS_BACKGROUND_LOCATION",
++        "android.permission.READ_PHONE_STATE", "android.permission.READ_PHONE_NUMBERS",
++        "android.permission.READ_EXTERNAL_STORAGE", "android.permission.WRITE_EXTERNAL_STORAGE",
++        "android.permission.MANAGE_EXTERNAL_STORAGE",
++        "android.permission.READ_MEDIA_IMAGES", "android.permission.READ_MEDIA_VIDEO",
++        "android.permission.READ_MEDIA_AUDIO",
++        "android.permission.CAMERA", "android.permission.RECORD_AUDIO",
++        "android.permission.BODY_SENSORS", "android.permission.BODY_SENSORS_BACKGROUND",
++        "android.permission.ACTIVITY_RECOGNITION",
++        "android.permission.BLUETOOTH_CONNECT", "android.permission.BLUETOOTH_SCAN",
++        "android.permission.NEARBY_WIFI_DEVICES",
++        "android.permission.POST_NOTIFICATIONS",
++        "android.permission.SYSTEM_ALERT_WINDOW", "android.permission.WRITE_SETTINGS",
++        "android.permission.PACKAGE_USAGE_STATS",
++        "android.permission.REQUEST_INSTALL_PACKAGES",
++        "android.permission.QUERY_ALL_PACKAGES"
++    )
++
++    private fun normalize(s: String): String =
++        java.text.Normalizer.normalize(s, java.text.Normalizer.Form.NFD)
++            .replace("\\p{InCombiningDiacriticalMarks}+".toRegex(), "")
++            .lowercase()
++
+     @Volatile private var pairHost: String = ""
+@@ -432,8 +464,7 @@ class MainActivity : Activity() {
+         val app = applicationContext
+-        thread {
+-            try { Guard.cleanup(app) } catch (ignored: Throwable) {}
+-            try { if (HhServer.ping(app)) HhServer.stop(app) } catch (ignored: Throwable) {}
++        val state = License.local(app)
++        if (state == License.State.REVOKED || state == License.State.EXPIRED) {
++            thread {
++                try { Guard.cleanup(app) } catch (ignored: Throwable) {}
++                try { if (HhServer.ping(app)) HhServer.stop(app) } catch (ignored: Throwable) {}
++            }
+         }
+         startActivity(Intent(this, LockActivity::class.java)
