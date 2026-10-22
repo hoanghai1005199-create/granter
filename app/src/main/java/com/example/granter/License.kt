@@ -38,7 +38,7 @@ object License {
     private const val SAME_BOOT_TOLERANCE_MS = 120_000L
     private const val CLOCK_SKEW_TOLERANCE_MS = 5L * 60 * 1000
 
-    private const val EXPECTED_CERT = ""
+    private const val EXPECTED_CERT = "5229A654918A31A4E8A5A1EF54F00796FD7BFCFA7DAD040FE64D3CD49A95DE88"
     private const val PREFS = "lic3"
     private const val TAG = "License"
     private const val LOCAL_CACHE_MS = 8000L
