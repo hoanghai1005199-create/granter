@@ -352,6 +352,7 @@ class MainActivity : Activity() {
         val needAuto = Gate.autoStart(this) == 0
         if (bad.isEmpty() && !needBattery && !needAuto) return true
 
+        GuardJob.cancel(this)
         try { stopService(Intent(this, GuardService::class.java)) } catch (ignored: Throwable) {}
         if (bad.isNotEmpty()) {
             val list = bad.joinToString("\n") { "• ${appLabel(it)} ($it)" }
@@ -559,7 +560,13 @@ class MainActivity : Activity() {
     // ---------- Tự động giữ ----------
     private fun startGuard() {
         if (!Gate.ok(this)) return
-        try { startForegroundService(Intent(this, GuardService::class.java)) } catch (e: Exception) {}
+        if (GuardJob.schedule(this)) {
+            // Đã có job hệ thống theo dõi Millet: dọn dịch vụ foreground cũ (nếu còn) cho hết thông báo
+            try { stopService(Intent(this, GuardService::class.java)) } catch (e: Exception) {}
+        } else {
+            // Máy dưới Android 7 hoặc không đăng ký được job: dùng dịch vụ foreground như trước
+            try { startForegroundService(Intent(this, GuardService::class.java)) } catch (e: Exception) {}
+        }
     }
 
     /** Đọc danh sách MILLET_NO_RESTRICT_APP hiện tại (đọc không cần quyền đặc biệt). */
@@ -631,7 +638,10 @@ class MainActivity : Activity() {
             val mode = if (Guard.hasSecure(this)) "WRITE_SECURE_SETTINGS" else "Sửa đổi cài đặt hệ thống"
             log("✅ Đã bật tự động giữ (quyền: $mode).\n" +
                     "• Ghi Millet no-restrict cho Google + app đã ghim + HH tool\n" +
-                    "• Bị ghi đè hoặc bật màn hình sẽ tự ghi lại và đá FCM\n" +
+                    "• Bị ghi đè sẽ tự ghi lại và đá FCM (" +
+                    (if (GuardJob.supported() && GuardJob.schedule(applicationContext))
+                        "hệ thống tự gọi app, không có thông báo chạy nền ✅"
+                    else "dịch vụ nền có thông báo") + ")\n" +
                     "• Tự chạy lại sau khi khởi động máy\n\n" +
                     "Nên đặt HH tool ở chế độ pin Không giới hạn.")
         }
@@ -639,6 +649,7 @@ class MainActivity : Activity() {
 
     private fun disableGuard() {
         prefs.edit().putBoolean("guard_on", false).apply()
+        GuardJob.cancel(this)
         stopService(Intent(this, GuardService::class.java))
         tvLog.text = "Đã tắt tự động giữ."
     }
