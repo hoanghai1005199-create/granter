@@ -46,6 +46,20 @@ object License {
     private val lastLocal = AtomicLong(0)
     private val lastLocalState = AtomicReference(State.OFFLINE)
 
+    // =====================================================================
+    // KHAI BÁO NATIVE (C++) - THÊM MỚI
+    // =====================================================================
+    init {
+        try {
+            System.loadLibrary("license")
+        } catch (e: Throwable) {
+            Log.e(TAG, "Không thể load thư viện native C++", e)
+        }
+    }
+
+    private external fun nativeVerify(payload: String, sigB64: String, pubKeyB64: String): Boolean
+    // =====================================================================
+
     private fun sp(c: Context) = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
 
@@ -76,13 +90,19 @@ object License {
         return b.joinToString("") { "%02x".format(it) }
     }
 
-    private fun verify(payload: String, sigB64: String): Boolean = try {
-        val pub = KeyFactory.getInstance("RSA").generatePublic(X509EncodedKeySpec(Base64.decode(PUBLIC_KEY, Base64.DEFAULT)))
-        val s = Signature.getInstance("SHA256withRSA")
-        s.initVerify(pub)
-        s.update(payload.toByteArray(Charsets.UTF_8))
-        s.verify(Base64.decode(sigB64, Base64.DEFAULT))
-    } catch (e: Throwable) { false }
+    // =====================================================================
+    // HÀM VERIFY ĐÃ ĐƯỢC CHUYỂN SANG GỌI NATIVE C++
+    // =====================================================================
+    private fun verify(payload: String, sigB64: String): Boolean {
+        return try {
+            // Gọi hàm C++ thay vì dùng thư viện Java
+            nativeVerify(payload, sigB64, PUBLIC_KEY)
+        } catch (e: Throwable) {
+            Log.e(TAG, "Lỗi verify native", e)
+            false
+        }
+    }
+    // =====================================================================
 
     @Suppress("DEPRECATION")
     private fun certOk(c: Context): Boolean {
