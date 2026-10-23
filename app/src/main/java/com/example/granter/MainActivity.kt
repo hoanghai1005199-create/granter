@@ -1354,14 +1354,14 @@ class MainActivity : Activity() {
         thread {
             try {
                 val run = backend() ?: return@thread
+                // Như HyperOS Tool: hủy job kiểm tra/reset số 64 của app Giao diện trước khi nhập (không bắt buộc)
+                val job = try {
+                    run("cmd jobscheduler cancel -u 0 com.android.thememanager 64 2>&1").trim()
+                } catch (e: Throwable) { "lỗi: ${e.message}" }
                 // MtzImporter dựng định dạng riêng của Xiaomi Themes rồi chép bằng shell (uid 2000)
                 val st = MtzImporter.stage(this, open) { log(it) }
                 val msg = MtzImporter.install(st, run)
-                // Bảo vệ theme: hủy job kiểm tra/reset số 64 của app Giao diện (bảo vệ một lần, lỗi không làm hỏng việc nhập)
-                val guard = try {
-                    run("cmd jobscheduler cancel -u 0 com.android.thememanager 64 2>&1").trim()
-                } catch (e: Throwable) { "lỗi: ${e.message}" }
-                log("✅ $rawName\n$msg\n🛡 Bảo vệ theme: " + guard.ifEmpty { "đã hủy job kiểm tra" } +
+                log("✅ $rawName\n$msg\n🛡 Job 64: " + job.ifEmpty { "đã hủy job kiểm tra" } +
                     "\nMở app Giao diện → Của tôi để áp dụng.")
             } catch (e: Throwable) {
                 log("❌ Nhập theme lỗi: ${e.message}")
@@ -1385,10 +1385,14 @@ class MainActivity : Activity() {
         tvLog.text = "Đang đọc trạng thái theme...\n"
         thread {
             val run = backend() ?: return@thread
+            val d = MtzImporter.THEME_DATA
             val out = run(
-                "ls -laR /data/system/theme 2>&1 | head -40; echo ---; " +
-                "ls -la /data/system/theme_magic 2>&1 | head -20; echo --- LOGCAT ---; " +
-                "logcat -d -t 600 2>&1 | grep -i -E 'thememanager|miui.theme|ThemeRuntime' | tail -40").trim()
+                "echo '--- LOGCAT theme ---'; " +
+                "logcat -b all -d -t 4000 2>&1 | grep -i -E 'thememanager|miui\\.theme|ThemeRuntime|ThemeResource|drm|\\.mrm|\\.mrc|mtz' | tail -60; " +
+                "echo; echo '--- LOGCAT loi (E/W) ---'; " +
+                "logcat -b all -d -t 4000 2>&1 | grep -E ' [EW] ' | grep -i theme | tail -30; " +
+                "echo; echo '--- .data/meta/theme ---'; ls -lt '$d/meta/theme' 2>&1 | head -8; " +
+                "echo; echo '--- /data/system/theme (moi nhat) ---'; ls -lt /data/system/theme 2>&1 | head -12").trim()
             log(out.ifEmpty { "(trống)" })
         }
     }
