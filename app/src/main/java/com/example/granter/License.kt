@@ -31,7 +31,7 @@ object License {
     private const val API_KEY = "Vf2te4paGki7t4ozRO2lZ1Am"
     
     // ⚠️ DÁN PUBLIC KEY MỚI CỦA BẠN VÀO ĐÂY (Từ lệnh cat public.pem)
-    private const val PUBLIC_KEY = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA..." 
+    private const val PUBLIC_KEY = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArY4q5Gvmyd9wJc/byTaJJaxkYQEmrUFq2Ta/d92voB6Owdm4/nQXYXqOsiqwFftmnOms/JMRuG2fX9WLs5rKW951/1mWjVDgTMCb31e3Yrd07xsEG5Uw9L0W9GFOgf4RZsE8Nw5AikrvuVw0zOa48R6MnXbrMfG/VOa4yH23gJRdeV0/5FuGhFr1ecFdkWYDgxLnixK63pBkj5GTpYCHRhVUmiM+XvWRXX14oK2A9mkT3gpd21zZ0cEY5v4gVZxmmIIUQlz7Wll9TTz9l1KoWXFOpNRMabvPFR5whqJPmS8/2Kd94mN23zv+rYZUvGdUpLO0djM2PmDcWSCbvpx7cQIDAQAB"
 
     private const val GRACE_MS = 45L * 60 * 1000
     private const val MIN_REFRESH_GAP_MS = 3L * 60 * 1000
