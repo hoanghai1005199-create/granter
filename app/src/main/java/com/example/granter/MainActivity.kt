@@ -1252,9 +1252,8 @@ class MainActivity : Activity() {
         }
     }
 
-    // ===== Nhập theme .mtz vào thư mục theme mặc định =====
+    // ===== Nhập theme .mtz vào Xiaomi Themes (định dạng .mrm/.mrc, xem MtzImporter.kt) =====
     private val REQ_MTZ = 4103
-    private val MTZ_DIR = "/storage/emulated/0/MIUI/theme"
 
     private fun pickMtz() {
         try {
@@ -1290,47 +1289,14 @@ class MainActivity : Activity() {
         tvLog.text = "Đang nhập theme...\n"
         thread {
             try {
-                // tên an toàn để đưa vào lệnh shell
-                val name = rawName.replace(Regex("[^A-Za-z0-9._ -]"), "_")
-                val target = "$MTZ_DIR/$name"
-                var done = false
-
-                // Cách 1: ghi thẳng nếu app có quyền truy cập mọi file
-                val allFiles = Build.VERSION.SDK_INT < 30 || android.os.Environment.isExternalStorageManager()
-                if (allFiles) {
-                    try {
-                        java.io.File(MTZ_DIR).mkdirs()
-                        val f = java.io.File(target)
-                        open().use { i -> f.outputStream().use { o -> i.copyTo(o) } }
-                        done = f.length() > 0
-                    } catch (e: Throwable) { /* thử cách 2 */ }
-                }
-
-                // Cách 2: chép tạm vào bộ nhớ ngoài của app rồi nhờ shell cp
-                if (!done) {
-                    val stageDir = getExternalCacheDir()
-                        ?: run { log("❌ Không có bộ nhớ ngoài để chép tạm."); return@thread }
-                    val stage = java.io.File(stageDir, name)
-                    open().use { i -> stage.outputStream().use { o -> i.copyTo(o) } }
-                    val run = backend() ?: run { stage.delete(); return@thread }
-                    val out = run("mkdir -p '$MTZ_DIR' && cp '${stage.absolutePath}' '$target' && chmod 666 '$target'").trim()
-                    stage.delete()
-                    done = run("ls '$target'").trim() == target
-                    if (!done) { log("❌ Chép thất bại:\n$out"); return@thread }
-                }
-
-                // Thử nhờ app Giao diện mở file (chưa kiểm chứng trên mọi máy)
-                var opened = ""
-                try {
-                    val run = backend()
-                    if (run != null) opened = run(
-                        "am start -a android.intent.action.VIEW -d 'file://$target' " +
-                        "-t application/octet-stream -p com.android.thememanager").trim()
-                } catch (e: Throwable) {}
-                log("✅ Đã chép theme vào:\n$target\n" +
-                    "Mở Cá nhân hoá. Theme → Của tôi (hoặc Nhập) để áp dụng." +
-                    (if (opened.isNotEmpty()) "\n\nKết quả mở app Giao diện:\n$opened" else ""))
-            } catch (e: Throwable) { log("❌ Nhập theme lỗi: ${e.message}") }
+                val run = backend() ?: return@thread
+                // MtzImporter dựng định dạng riêng của Xiaomi Themes rồi chép bằng shell (uid 2000)
+                val st = MtzImporter.stage(this, open) { log(it) }
+                val msg = MtzImporter.install(st, run)
+                log("✅ $rawName\n$msg\nMở app Giao diện → Của tôi để áp dụng.")
+            } catch (e: Throwable) {
+                log("❌ Nhập theme lỗi: ${e.message}")
+            }
         }
     }
 
