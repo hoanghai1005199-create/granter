@@ -202,17 +202,17 @@ class MainActivity : Activity() {
                 circleButton("📶", "Kết nối ADB") { connectAdb() },
                 circleButton("🌐", "Đặt ngôn ngữ vi-VN") { setLocaleVi() }))
             addView(circleRow(
-                circleButton("📡", "Kiểm tra FCM") { FcmCheck.open(this@MainActivity) },
+                circleButton("📡", "Tình trạng FCM") { FcmCheck.open(this@MainActivity) },
                 circleButton("📋", "Xem Millet") { showMillet() },
                 circleButton("⚡", "Cấp full quyền chỉ với 1 nhấn") { confirmFixAll() },
                 circleButton("🖥", "Máy chủ shell (bật/tắt)") { toggleServer() }))
             addView(circleRow(
-                circleButton("❄", "Danh sách freeze") { showFreezeManager() },
-                circleButton("📜", "Nhật ký ghi đè") { showOverrideLog() },
+                circleButton("❄", "Freezer") { showFreezeManager() },
+                circleButton("📜", "Nhật ký ") { showOverrideLog() },
                 circleButton("💾", "Sao lưu / khôi phục") { showBackupMenu() },
-                circleButton("🎨", "Nhập theme .mtz") { pickMtz() }))
+                circleButton("🎨", "Nhập file .mtz") { pickMtz() }))
             addView(circleRow(
-                circleButton("🇻🇳", "Việt hoá giao diện Xiaomi") { installBundledMtz() },
+                circleButton("🇻🇳", "Việt hoá") { installBundledMtz() },
                 circleButton("🔍", "Kiểm tra theme") { checkTheme() }))
         }
 
@@ -278,7 +278,7 @@ class MainActivity : Activity() {
             addView(search)
             addView(list)
             addView(tvSelected)
-            addView(blueButton("🔑 Cấp quyền cho app đã tích") { showTab(2); grantChecked() })
+            addView(blueButton(" Cấp full quyền cho app bạn đã chọn") { showTab(2); grantChecked() })
         }
         // Trang 1: app đã cấp
         val pagePinned = ScrollView(this).apply {
@@ -316,7 +316,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, dp(6), 0, dp(6))
         }
-        listOf("📱 Ứng dụng", "⚡ Đã cấp", "🛠 Công cụ").forEachIndexed { i, name ->
+        listOf(" Ứng dụng", " Đã cấp", "Bộ Công cụ").forEachIndexed { i, name ->
             val t = TextView(this).apply {
                 text = name; textSize = 14f; setTextColor(DARK)
                 gravity = android.view.Gravity.CENTER
@@ -536,7 +536,7 @@ class MainActivity : Activity() {
                 })
             return false
         }
-        val sb = StringBuilder("HH tool chỉ chạy khi:\n")
+        val sb = StringBuilder("HH Tool chỉ chạy khi:\n")
         if (needBattery) sb.append("• Tiết kiệm pin: đặt \"Không hạn chế\"\n")
         if (needAuto) sb.append("• Tự khởi động: bật\n")
         sb.append("\nBật xong quay lại app, hộp thoại này sẽ tự biến mất.")
@@ -588,12 +588,12 @@ class MainActivity : Activity() {
         }
         sb.append(when {
             !any -> "Freeze: (chưa có khóa)"
-            bad.isEmpty() -> "Freeze: ✅ có GMS + Zalo"
+            bad.isEmpty() -> "Freeze✅"
             else -> "Freeze: ⚠ " + bad.joinToString("; ")
         }).append('\n')
 
-        sb.append("GuardJob: ").append(if (GuardJob.isScheduled(this)) "✅ đã đăng ký" else "❌ chưa đăng ký")
-            .append("  |  Máy chủ shell: ").append(if (serverUp) "✅ chạy" else "❌ tắt").append('\n')
+        sb.append("GuardJob: ").append(if (GuardJob.isScheduled(this)) "✅ Đã đăng ký" else "❌ Chưa đăng ký")
+            .append("  |  Máy chủ shell: ").append(if (serverUp) "✅ Chạy" else "❌ Tắt").append('\n')
 
         val log = Guard.overrideLog(this)
         if (log.isEmpty()) sb.append("Ghi đè: chưa có lần nào")
@@ -664,7 +664,7 @@ class MainActivity : Activity() {
             }
             val run = backend() ?: return@thread
             val ok = HhServer.start(this, run)
-            log(if (ok) "✅ Máy chủ shell đang chạy.\nTừ giờ có thể tắt gỡ lỗi USB/không dây, " +
+            log(if (ok) "✅ Máy chủ shell đang chạy.\nVẫn cần giữ gỡ lỗi USB/không dây, " +
                     "máy chủ vẫn chạy đến khi khởi động lại máy."
             else "❌ ${HhServer.lastError}")
             updateStatus()
@@ -1061,12 +1061,12 @@ class MainActivity : Activity() {
             val mode = if (Guard.hasSecure(this)) "WRITE_SECURE_SETTINGS" else "Sửa đổi cài đặt hệ thống"
             log("✅ Đã bật tự động giữ (quyền: $mode).\n" +
                     "• Ghi Millet no-restrict cho Google + app đã ghim + HH tool\n" +
-                    "• Bị ghi đè sẽ tự ghi lại và đá FCM (" +
+                    "• Tự động fix + FCM (" +
                     (if (GuardJob.supported() && GuardJob.schedule(applicationContext))
-                        "hệ thống tự gọi app, không có thông báo chạy nền ✅"
+                        "Hệ thống tự vận hành✅"
                     else "dịch vụ nền có thông báo") + ")\n" +
                     "• Tự chạy lại sau khi khởi động máy\n\n" +
-                    "Nên đặt HH tool ở chế độ pin Không giới hạn.")
+                    "Chúc mừng bạn.")
         }
     }
 
@@ -1176,7 +1176,7 @@ class MainActivity : Activity() {
         if (n == 0) { toast("Không thấy ứng dụng mạng xã hội / ngân hàng nào"); return }
         android.app.AlertDialog.Builder(this)
             .setTitle("Cấp full quyền")
-            .setMessage("Sẽ cấp toàn bộ quyền (giống nút CẤP QUYỀN) cho $n ứng dụng (mạng xã hội, ngân hàng và Google Play Services), sửa thông báo, rồi bật tự động giữ Millet + FCM. Tiếp tục?")
+            .setMessage("Sẽ cấp toàn bộ quyền với 1 nhấn cho $n ứng dụng mạng xã hội, ngân hàng. Tiếp tục?")
             .setPositiveButton("Cấp") { _, _ -> fixAll() }
             .setNegativeButton("Hủy", null)
             .show().also { styleDialog(it) }
@@ -1227,8 +1227,8 @@ class MainActivity : Activity() {
                 runOnUiThread { startGuard() }
             }
             log("✅ Đã sửa ${targets.size} ứng dụng\n🛡 ${ml.take(200)}\n" +
-                    (if (guardOn) "🔒 Đã bật tự động giữ Millet + FCM\n\n"
-                    else "⚠ Chưa bật được tự động giữ (thiếu quyền ghi cài đặt hệ thống). Bật Máy chủ shell hoặc Kết nối ADB rồi mở lại app.\n\n") +
+                    (if (guardOn) "🔒 Đã bật tự động fix\n\n"
+                    else "⚠ Chưa bật được tự động fix (thiếu quyền ghi cài đặt hệ thống). Bật Máy chủ shell hoặc Kết nối ADB rồi mở lại app.\n\n") +
                     done)
         }
     }
@@ -1328,7 +1328,7 @@ class MainActivity : Activity() {
                         "-t application/octet-stream -p com.android.thememanager").trim()
                 } catch (e: Throwable) {}
                 log("✅ Đã chép theme vào:\n$target\n" +
-                    "Mở app Giao diện → Của tôi (hoặc Nhập) để áp dụng." +
+                    "Mở Cá nhân hoá. Theme → Của tôi (hoặc Nhập) để áp dụng." +
                     (if (opened.isNotEmpty()) "\n\nKết quả mở app Giao diện:\n$opened" else ""))
             } catch (e: Throwable) { log("❌ Nhập theme lỗi: ${e.message}") }
         }
