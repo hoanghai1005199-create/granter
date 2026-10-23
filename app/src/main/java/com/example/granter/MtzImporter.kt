@@ -101,7 +101,9 @@ object MtzImporter {
                 files += "content/$code/$id.mrc"
 
                 val parents = JSONArray().put(resource(themeId, "theme"))
-                put("meta/$code/$id.mrm", meta(id, h, s, info, code, emptyList(), emptyList(), parents, JSONArray()))
+                put("meta/$code/$id.mrm",
+                    meta(id, h, s, info, code, emptyList(), emptyList(), parents, JSONArray())
+                        .toByteArray(Charsets.UTF_8))
                 subs.put(resource(id, code))
             }
 
@@ -131,7 +133,8 @@ object MtzImporter {
 
             put("content/theme/$themeId.mrc", ByteArray(0))
             put("meta/theme/$themeId.mrm",
-                meta(themeId, mtzSha1, mtzSize, info, info.title, thumbs, names, JSONArray(), subs))
+                meta(themeId, mtzSha1, mtzSize, info, info.title, thumbs, names, JSONArray(), subs)
+                    .toByteArray(Charsets.UTF_8))
         }
         return Staged(work, root, files)
     }
