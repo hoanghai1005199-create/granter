@@ -27,10 +27,11 @@ import java.util.concurrent.atomic.AtomicReference
 object License {
     enum class State { ACTIVE, PENDING, EXPIRED, REVOKED, OFFLINE }
 
-    // LINK SERVER MỚI CỦA BẠN
     private const val ENDPOINT = "https://script.google.com/macros/s/AKfycbyqIX05gSqExLV-ZT_YRiH3ebB_XMhgh4F6W9JRjH06gmTfwkYbT7E4KsKqECiTknXZsA/exec"
     private const val API_KEY = "Vf2te4paGki7t4ozRO2lZ1Am"
-    private const val PUBLIC_KEY = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0acW7K7bYZgL5TUIyFTeSFrxPGDQ/GiBLtq3gY75J2sm9Y/LPXSN3N1zyDQR9zicrvNny8spPTWN0fT7gMtHw7DOFrplUuC0K3U838+7Vi/5gI+xjBsGt181WnU4SmeFtBB4FfHcBodxx2RrYRVvSjmjPBiX/hmOdoEldPr1AhScwxVKpx/B74BjUDI5KlirrYkj4pdobiQQW5tfRDJHQCDoKqQoIgQXoR8NFxu2BE1FrRnuFWGeukNGDw0b0YR8VAb+wxP36ekK9RAbwXmdG5V4hBrzSx05e7a6qKCue5BQm2fMQNiVNuv9hUeLsfDqIGdV7mpLVsspVbdILgYdIwIDAQAB"
+    
+    // ⚠️ DÁN PUBLIC KEY MỚI CỦA BẠN VÀO ĐÂY (Từ lệnh cat public.pem)
+    private const val PUBLIC_KEY = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA..." 
 
     private const val GRACE_MS = 45L * 60 * 1000
     private const val MIN_REFRESH_GAP_MS = 3L * 60 * 1000
@@ -38,8 +39,9 @@ object License {
     private const val SAME_BOOT_TOLERANCE_MS = 120_000L
     private const val CLOCK_SKEW_TOLERANCE_MS = 5L * 60 * 1000
 
-    // MÃ SHA-256 KEYSTORE CỦA BẠN
-    private const val EXPECTED_CERT = "5229A654918A31A4E8A5A1EF54F00796FD7BFCFA7DAD040FE64D3CD49A95DE88"
+    // ĐÃ CẬP NHẬT MÃ SHA-256 MỚI (Từ ảnh chụp màn hình của bạn)
+    private const val EXPECTED_CERT = "32D7C9EDC4C1EC26CE591006E9C9CDDF142BA04E2F57A0340AAAA5740357DBB4"
+    
     private const val PREFS = "lic3"
     private const val TAG = "License"
     private const val LOCAL_CACHE_MS = 8000L
@@ -88,7 +90,6 @@ object License {
         return b.joinToString("") { "%02x".format(it) }
     }
 
-    // Verify với C++ và Fallback Java
     private fun verify(payload: String, sigB64: String): Boolean {
         try {
             if (nativeVerify(payload, sigB64, PUBLIC_KEY)) return true
