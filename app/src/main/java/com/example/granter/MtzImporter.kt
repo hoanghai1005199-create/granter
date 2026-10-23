@@ -102,7 +102,7 @@ object MtzImporter {
 
                 val parents = JSONArray().put(resource(themeId, "theme"))
                 put("meta/$code/$id.mrm",
-                    meta(id, h, s, info, code, emptyList(), emptyList(), parents, JSONArray())
+                    meta(id, h, s, info, code, emptyList(), emptyList(), parents, JSONArray(), module = true)
                         .toByteArray(Charsets.UTF_8))
                 subs.put(resource(id, code))
             }
@@ -172,7 +172,8 @@ object MtzImporter {
 
     private fun meta(
         id: String, sha1: String, size: Long, info: Info, title: String,
-        thumbs: List<String>, previews: List<String>, parents: JSONArray, subs: JSONArray
+        thumbs: List<String>, previews: List<String>, parents: JSONArray, subs: JSONArray,
+        module: Boolean = false
     ): String = JSONObject()
         .put("localId", id)
         .put("onlineId", JSONObject.NULL).put("assemblyId", JSONObject.NULL).put("productId", JSONObject.NULL)
@@ -183,6 +184,21 @@ object MtzImporter {
         .put("builtInThumbnails", locList(thumbs)).put("builtInPreviews", locList(previews))
         .put("thumbnails", JSONArray()).put("previews", JSONArray())
         .put("parentResources", parents).put("subResources", subs)
+        // Các trường còn lại theo mẫu metadata của Xiaomi Themes (price -1 = miễn phí/cục bộ)
+        .put("extraMeta", JSONObject())
+        .put("metaPath", JSONObject.NULL).put("contentPath", JSONObject.NULL).put("rightsPath", JSONObject.NULL)
+        .put("screenRatio", JSONObject.NULL).put("supportHomeSearchBar", false)
+        .put("packageVersion", JSONObject.NULL).put("packageName", JSONObject.NULL)
+        .put("officialIcons", false).put("iconsCount", JSONObject.NULL).put("fontWeight", JSONObject.NULL)
+        .put("price", -1).put("themeType", 0)
+        .also {
+            if (module) {
+                it.put("wallpaperStyle", 0).put("isSingleResource", false)
+                    .put("isBackUpVersion", false).put("miuiAdapterVersion", "4.0")
+            } else {
+                it.put("isBackupVersion", false).put("miuiAdapterVersion", JSONObject.NULL)
+            }
+        }
         .toString(4)
 
     // ---------- tiện ích ----------
