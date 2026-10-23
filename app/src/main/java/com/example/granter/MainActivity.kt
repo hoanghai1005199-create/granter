@@ -99,6 +99,7 @@ class MainActivity : Activity() {
     private val prefs by lazy { getSharedPreferences("granter", MODE_PRIVATE) }
     private var nsdListener: NsdManager.DiscoveryListener? = null
     private lateinit var pairBox: LinearLayout
+    private var showTab: (Int) -> Unit = {}
     private lateinit var etCode: EditText
     private lateinit var etPort: EditText
     @Volatile private var pairHost: String = ""
@@ -179,7 +180,7 @@ class MainActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(BG)
-            setPadding(32, 48, 32, 32)
+            setPadding(dp(12), dp(16), dp(12), dp(8))
         }
 
         tvStatus = TextView(this).apply { textSize = 13f; setTextColor(DARK) }
@@ -187,19 +188,19 @@ class MainActivity : Activity() {
             textSize = 12f; setTextColor(DARK); setPadding(0, dp(4), 0, dp(4))
         }
         pinnedBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val search = EditText(this).apply { hint = "Tìm ứng dụng..." }
+        val search = EditText(this).apply { hint = "Tìm ứng dụng..."; setSingleLine() }
         val list = ListView(this).apply { layoutParams = LinearLayout.LayoutParams(-1, 0, 1f) }
         tvSelected = TextView(this).apply {
             text = "Chưa chọn ứng dụng"; textSize = 15f; setTextColor(DARK)
             setPadding(0, dp(6), 0, dp(6))
         }
-        val none = { toast("Hãy tích chọn ít nhất 1 ứng dụng") }
         val grid = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(circleRow(
-                circleButton("🔑", "Cấp quyền (các app đã tích)") { grantChecked() },
+                circleButton("🔑", "Cấp quyền (các app đã tích)") { showTab(2); grantChecked() },
                 circleButton("🔗", "Ghép nối ADB") { startPairing() },
-                circleButton("📶", "Kết nối ADB") { connectAdb() }))
+                circleButton("📶", "Kết nối ADB") { connectAdb() },
+                circleButton("🌐", "Đặt ngôn ngữ vi-VN") { setLocaleVi() }))
             addView(circleRow(
                 circleButton("📡", "Kiểm tra FCM") { FcmCheck.open(this@MainActivity) },
                 circleButton("📋", "Xem Millet") { showMillet() },
@@ -208,14 +209,14 @@ class MainActivity : Activity() {
             addView(circleRow(
                 circleButton("❄", "Danh sách freeze") { showFreezeManager() },
                 circleButton("📜", "Nhật ký ghi đè") { showOverrideLog() },
-                circleButton("💾", "Sao lưu / khôi phục") { showBackupMenu() }))
+                circleButton("💾", "Sao lưu / khôi phục") { showBackupMenu() },
+                circleButton("🎨", "Nhập theme .mtz") { pickMtz() }))
+            addView(circleRow(
+                circleButton("🇻🇳", "Việt hoá giao diện Xiaomi") { installBundledMtz() },
+                circleButton("🔍", "Kiểm tra theme") { checkTheme() }))
         }
 
-        tvLog = TextView(this).apply { setTextColor(DARK) }
-        val scroll = ScrollView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(-1, 0, 0.8f)
-            addView(tvLog)
-        }
+        tvLog = TextView(this).apply { setTextColor(DARK); setPadding(0, dp(8), 0, dp(16)) }
 
         etCode = EditText(this).apply {
             hint = "Mã ghép nối 6 số"; textSize = 22f; setTextColor(DARK)
@@ -239,14 +240,6 @@ class MainActivity : Activity() {
             addView(etPort)
             addView(blueButton("Ghép nối") { doPairInline() })
         }
-
-        root.addView(tvStatus)
-        root.addView(tvHealth)
-        root.addView(pairBox)
-        root.addView(TextView(this).apply {
-            text = "Ứng dụng đã cấp (bấm 1 lần để cấp lại, nhấn giữ để bỏ)"; textSize = 14f; setTextColor(DARK)
-        })
-        root.addView(pinnedBox)
 
         val chipColors = mapOf(
             "user" to Pair(Color.parseColor("#FBD9E4"), Color.parseColor("#F2A0BC")),
@@ -274,12 +267,77 @@ class MainActivity : Activity() {
             chips += m to b; chipBar.addView(b)
         }
         paintChips()
-        root.addView(HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false; addView(chipBar)
-        })
 
-        root.addView(search); root.addView(list)
-        root.addView(tvSelected); root.addView(grid); root.addView(scroll)
+        // ===== 3 trang =====
+        // Trang 0: danh sách app (list chiếm hết chiều cao còn lại)
+        val pageApps = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(HorizontalScrollView(context).apply {
+                isHorizontalScrollBarEnabled = false; addView(chipBar)
+            })
+            addView(search)
+            addView(list)
+            addView(tvSelected)
+            addView(blueButton("🔑 Cấp quyền cho app đã tích") { showTab(2); grantChecked() })
+        }
+        // Trang 1: app đã cấp
+        val pagePinned = ScrollView(this).apply {
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(0, dp(8), 0, dp(8))
+                addView(TextView(context).apply {
+                    text = "Ứng dụng đã cấp (bấm 1 lần để cấp lại, nhấn giữ để bỏ)"
+                    textSize = 14f; setTextColor(DARK); setPadding(0, 0, 0, dp(8))
+                })
+                addView(pinnedBox)
+            })
+        }
+        // Trang 2: công cụ + trạng thái + nhật ký (cuộn được)
+        val pageTools = ScrollView(this).apply {
+            addView(LinearLayout(context).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(tvStatus)
+                addView(tvHealth)
+                addView(pairBox)
+                addView(grid)
+                addView(tvLog)
+            })
+        }
+
+        val pages = listOf<View>(pageApps, pagePinned, pageTools)
+        val content = FrameLayout(this).apply {
+            layoutParams = LinearLayout.LayoutParams(-1, 0, 1f)
+            pages.forEach { addView(it, FrameLayout.LayoutParams(-1, -1)) }
+        }
+
+        // Thanh tab dưới cùng
+        val tabViews = mutableListOf<TextView>()
+        val tabBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(6), 0, dp(6))
+        }
+        listOf("📱 Ứng dụng", "⚡ Đã cấp", "🛠 Công cụ").forEachIndexed { i, name ->
+            val t = TextView(this).apply {
+                text = name; textSize = 14f; setTextColor(DARK)
+                gravity = android.view.Gravity.CENTER
+                setPadding(0, dp(10), 0, dp(10))
+                layoutParams = LinearLayout.LayoutParams(0, -2, 1f).apply { setMargins(dp(3), 0, dp(3), 0) }
+                setOnClickListener { showTab(i) }
+            }
+            tabViews += t; tabBar.addView(t)
+        }
+        showTab = { i ->
+            pages.forEachIndexed { k, p -> p.visibility = if (k == i) View.VISIBLE else View.GONE }
+            tabViews.forEachIndexed { k, t ->
+                t.background = shape(if (k == i) BLUE else BAR, false)
+                t.setTypeface(null, if (k == i) android.graphics.Typeface.BOLD
+                    else android.graphics.Typeface.NORMAL)
+            }
+        }
+        showTab(0)
+
+        root.addView(content)
+        root.addView(tabBar)
         setContentView(root)
 
         all = packageManager.getInstalledApplications(0)
@@ -713,7 +771,7 @@ class MainActivity : Activity() {
         pinnedBox.removeAllViews()
         val set = prefs.getStringSet("pinned", emptySet())!!
         all.filter { it.pkg in set }.forEach { app ->
-            pinnedBox.addView(blueButton("⚡ ${app.label}") { grantMany(listOf(app), remember = false) }.apply {
+            pinnedBox.addView(blueButton("⚡ ${app.label}") { showTab(2); grantMany(listOf(app), remember = false) }.apply {
                 background = shape(BLUE, false); stateListAnimator = null
                 setOnLongClickListener { forgetGranted(app.pkg); toast("Đã bỏ ${app.label} khỏi danh sách"); true }
             })
@@ -915,6 +973,7 @@ class MainActivity : Activity() {
         when (requestCode) {
             REQ_EXPORT -> exportConfig(uri)
             REQ_IMPORT -> importConfig(uri)
+            REQ_MTZ -> importMtz(uri)
         }
     }
 
@@ -1175,5 +1234,117 @@ class MainActivity : Activity() {
     }
 
     private fun log(s: String) = runOnUiThread { tvLog.text = s }
+    // ===== Đặt ngôn ngữ hệ thống = vi-VN =====
+    private fun setLocaleVi() {
+        tvLog.text = "Đang đặt system_locales = vi-VN...\n"
+        thread {
+            val run = backend() ?: return@thread
+            val before = run("settings get system system_locales").trim()
+            val res = run("settings put system system_locales vi-VN").trim()
+            val after = run("settings get system system_locales").trim()
+            val prop = run("getprop persist.sys.locale").trim()
+            val ok = after.startsWith("vi-VN")
+            log((if (ok) "✅ Đã đặt system_locales = $after" else "❌ Không đặt được (đang là: $after)") +
+                    "\nTrước đó: $before" +
+                    (if (res.isNotEmpty()) "\nLệnh trả về: $res" else "") +
+                    "\npersist.sys.locale hiện tại: ${prop.ifEmpty { "(trống)" }}" +
+                    (if (ok) "\nNếu giao diện hệ thống chưa đổi, hãy khởi động lại máy." else ""))
+        }
+    }
+
+    // ===== Nhập theme .mtz vào thư mục theme mặc định =====
+    private val REQ_MTZ = 4103
+    private val MTZ_DIR = "/storage/emulated/0/MIUI/theme"
+
+    private fun pickMtz() {
+        try {
+            startActivityForResult(
+                Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+                    .setType("*/*"), REQ_MTZ)
+        } catch (e: Exception) { toast("Không mở được trình chọn file") }
+    }
+
+    private fun displayName(uri: android.net.Uri): String {
+        var n: String? = null
+        try {
+            contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                null, null, null)?.use { if (it.moveToFirst()) n = it.getString(0) }
+        } catch (e: Throwable) {}
+        return (n ?: uri.lastPathSegment ?: "theme.mtz").substringAfterLast('/')
+    }
+
+    private fun importMtz(uri: android.net.Uri) {
+        val raw = displayName(uri)
+        if (!raw.endsWith(".mtz", ignoreCase = true)) {
+            tvLog.text = "❌ Chỉ nhận file .mtz (bạn chọn: $raw)"; return
+        }
+        installMtz(raw) { contentResolver.openInputStream(uri)!! }
+    }
+
+    // Việt hoá giao diện Xiaomi: dùng file MTZOS4.mtz đóng gói trong assets
+    private fun installBundledMtz() {
+        installMtz("MTZOS4.mtz") { assets.open("MTZOS4.mtz") }
+    }
+
+    private fun installMtz(rawName: String, open: () -> java.io.InputStream) {
+        tvLog.text = "Đang nhập theme...\n"
+        thread {
+            try {
+                // tên an toàn để đưa vào lệnh shell
+                val name = rawName.replace(Regex("[^A-Za-z0-9._ -]"), "_")
+                val target = "$MTZ_DIR/$name"
+                var done = false
+
+                // Cách 1: ghi thẳng nếu app có quyền truy cập mọi file
+                val allFiles = Build.VERSION.SDK_INT < 30 || android.os.Environment.isExternalStorageManager()
+                if (allFiles) {
+                    try {
+                        java.io.File(MTZ_DIR).mkdirs()
+                        val f = java.io.File(target)
+                        open().use { i -> f.outputStream().use { o -> i.copyTo(o) } }
+                        done = f.length() > 0
+                    } catch (e: Throwable) { /* thử cách 2 */ }
+                }
+
+                // Cách 2: chép tạm vào bộ nhớ ngoài của app rồi nhờ shell cp
+                if (!done) {
+                    val stageDir = getExternalCacheDir()
+                        ?: run { log("❌ Không có bộ nhớ ngoài để chép tạm."); return@thread }
+                    val stage = java.io.File(stageDir, name)
+                    open().use { i -> stage.outputStream().use { o -> i.copyTo(o) } }
+                    val run = backend() ?: run { stage.delete(); return@thread }
+                    val out = run("mkdir -p '$MTZ_DIR' && cp '${stage.absolutePath}' '$target' && chmod 666 '$target'").trim()
+                    stage.delete()
+                    done = run("ls '$target'").trim() == target
+                    if (!done) { log("❌ Chép thất bại:\n$out"); return@thread }
+                }
+
+                // Thử nhờ app Giao diện mở file (chưa kiểm chứng trên mọi máy)
+                var opened = ""
+                try {
+                    val run = backend()
+                    if (run != null) opened = run(
+                        "am start -a android.intent.action.VIEW -d 'file://$target' " +
+                        "-t application/octet-stream -p com.android.thememanager").trim()
+                } catch (e: Throwable) {}
+                log("✅ Đã chép theme vào:\n$target\n" +
+                    "Mở app Giao diện → Của tôi (hoặc Nhập) để áp dụng." +
+                    (if (opened.isNotEmpty()) "\n\nKết quả mở app Giao diện:\n$opened" else ""))
+            } catch (e: Throwable) { log("❌ Nhập theme lỗi: ${e.message}") }
+        }
+    }
+
+    // Đọc thư mục theme của hệ thống để biết khi nào theme bị reset
+    private fun checkTheme() {
+        tvLog.text = "Đang đọc trạng thái theme...\n"
+        thread {
+            val run = backend() ?: return@thread
+            val out = run(
+                "ls -laR /data/system/theme 2>&1 | head -40; echo ---; " +
+                "ls -la /data/system/theme_magic 2>&1 | head -20").trim()
+            log(out.ifEmpty { "(trống)" })
+        }
+    }
+
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
 }
