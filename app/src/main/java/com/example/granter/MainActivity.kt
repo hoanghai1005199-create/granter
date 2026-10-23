@@ -213,7 +213,9 @@ class MainActivity : Activity() {
                 circleButton("🎨", "Nhập file .mtz") { pickMtz() }))
             addView(circleRow(
                 circleButton("🇻🇳", "Việt hoá") { installBundledMtz() },
-                circleButton("🔍", "Kiểm tra theme") { checkTheme() }))
+                circleButton("🔍", "Kiểm tra theme") { checkTheme() },
+                circleButton("🔀", "Chế độ kết nối") { showBackendMode() },
+                circleButton("🛡", "Bảo vệ tiếng Việt") { protectTheme() }))
         }
 
         tvLog = TextView(this).apply { setTextColor(DARK); setPadding(0, dp(8), 0, dp(16)) }
@@ -558,10 +560,17 @@ class MainActivity : Activity() {
         }
         thread {
             val srv = HhServer.ping(this)
-            val txt = if (shizukuAlive()) "Chế độ: Shizuku đang chạy"
-            else if (srv) "Chế độ: Máy chủ shell HH tool đang chạy ✅"
-            else "Chế độ: ADB tích hợp (" +
+            val mode = backendMode()
+            val adbTxt = "ADB tích hợp (" +
                     (if (AdbBackend.isConnected(this)) "đã kết nối ✅" else "chưa kết nối") + ")"
+            val shizTxt = if (shizukuAlive()) "Shizuku đang chạy" else "Shizuku chưa chạy ❌"
+            val srvTxt = if (srv) "Máy chủ shell HH tool đang chạy ✅" else "Máy chủ shell chưa chạy ❌"
+            val txt = when (mode) {
+                "shizuku" -> "Chế độ (chọn tay): $shizTxt"
+                "server" -> "Chế độ (chọn tay): $srvTxt"
+                "adb" -> "Chế độ (chọn tay): $adbTxt"
+                else -> "Chế độ: " + (if (shizukuAlive()) shizTxt else if (srv) srvTxt else adbTxt)
+            }
             val health = try { healthText(srv) } catch (e: Throwable) { "" }
             lastStatusMs = System.currentTimeMillis()
             lastStatusText = txt
@@ -605,27 +614,82 @@ class MainActivity : Activity() {
         return sb.toString()
     }
 
-    private fun backend(): ((String) -> String)? {
-        if (License.local(this) != License.State.ACTIVE) { runOnUiThread { goLock() }; return null }
-        if (shizukuAlive()) {
-            if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
-                runOnUiThread {
-                    Shizuku.requestPermission(1)
-                    toast("Hãy cho phép Shizuku rồi bấm lại")
-                }
-                return null
+    // Chế độ kết nối chọn tay: auto | shizuku | server | adb
+    private fun backendMode(): String = prefs.getString("backend_mode", "auto") ?: "auto"
+
+    private fun modeName(m: String) = when (m) {
+        "shizuku" -> "Shizuku"
+        "server" -> "Máy chủ shell"
+        "adb" -> "ADB tích hợp"
+        else -> "Tự động"
+    }
+
+    private fun showBackendMode() {
+        val modes = arrayOf("auto", "shizuku", "server", "adb")
+        val labels = arrayOf(
+            "Tự động (Shizuku → Máy chủ shell → ADB)",
+            "Shizuku",
+            "Máy chủ shell",
+            "ADB tích hợp")
+        val d = android.app.AlertDialog.Builder(this)
+            .setTitle("Chế độ kết nối")
+            .setSingleChoiceItems(labels, modes.indexOf(backendMode()).coerceAtLeast(0)) { dlg, i ->
+                prefs.edit().putString("backend_mode", modes[i]).apply()
+                lastStatusMs = 0L
+                updateStatus()
+                toast("Đã chọn: ${modeName(modes[i])}")
+                dlg.dismiss()
             }
-            return { s -> shizukuSh(s) }
+            .setNegativeButton("Đóng", null)
+            .create()
+        d.show()
+        styleDialog(d)
+    }
+
+    private fun shizukuBackend(): ((String) -> String)? {
+        if (!shizukuAlive()) {
+            log("Shizuku không chạy.\nMở app Shizuku để bật, hoặc đổi chế độ ở nút Chế độ kết nối.")
+            return null
         }
-        if (HhServer.ping(this)) {
-            return { s -> HhServer.exec(this, s) ?: "ERR ${HhServer.lastError}" }
+        if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
+            runOnUiThread {
+                Shizuku.requestPermission(1)
+                toast("Hãy cho phép Shizuku rồi bấm lại")
+            }
+            return null
         }
+        return { s -> shizukuSh(s) }
+    }
+
+    private fun serverBackend(): ((String) -> String)? {
+        if (!HhServer.ping(this)) {
+            log("Máy chủ shell chưa chạy.\nBấm nút Máy chủ shell (bật/tắt) để bật, hoặc đổi chế độ ở nút Chế độ kết nối.")
+            return null
+        }
+        return { s -> HhServer.exec(this, s) ?: "ERR ${HhServer.lastError}" }
+    }
+
+    private fun adbBackend(): ((String) -> String)? {
         if (!AdbBackend.ensureConnected(this)) {
             log("Chưa kết nối ADB.\nBấm GHÉP NỐI ADB (lần đầu) rồi KẾT NỐI ADB.\n" +
                     AdbBackend.lastError)
             return null
         }
         return { s -> AdbBackend.run(this, s) }
+    }
+
+    private fun backend(): ((String) -> String)? {
+        if (License.local(this) != License.State.ACTIVE) { runOnUiThread { goLock() }; return null }
+        return when (backendMode()) {
+            "shizuku" -> shizukuBackend()
+            "server" -> serverBackend()
+            "adb" -> adbBackend()
+            else -> {
+                if (shizukuAlive()) return shizukuBackend()
+                if (HhServer.ping(this)) return serverBackend()
+                adbBackend()
+            }
+        }
     }
 
     private fun shizukuSh(cmd: String): String = try {
@@ -1293,10 +1357,26 @@ class MainActivity : Activity() {
                 // MtzImporter dựng định dạng riêng của Xiaomi Themes rồi chép bằng shell (uid 2000)
                 val st = MtzImporter.stage(this, open) { log(it) }
                 val msg = MtzImporter.install(st, run)
-                log("✅ $rawName\n$msg\nMở app Giao diện → Của tôi để áp dụng.")
+                // Bảo vệ theme: hủy job kiểm tra/reset số 64 của app Giao diện (bảo vệ một lần, lỗi không làm hỏng việc nhập)
+                val guard = try {
+                    run("cmd jobscheduler cancel -u 0 com.android.thememanager 64 2>&1").trim()
+                } catch (e: Throwable) { "lỗi: ${e.message}" }
+                log("✅ $rawName\n$msg\n🛡 Bảo vệ theme: " + guard.ifEmpty { "đã hủy job kiểm tra" } +
+                    "\nMở app Giao diện → Của tôi để áp dụng.")
             } catch (e: Throwable) {
                 log("❌ Nhập theme lỗi: ${e.message}")
             }
+        }
+    }
+
+    // Hủy job định kỳ số 64 của app Giao diện (job kiểm tra/reset theme). Bảo vệ một lần, hệ thống có thể đặt lại.
+    private fun protectTheme() {
+        tvLog.text = "Đang bảo vệ tiếng Việt...\n"
+        thread {
+            val run = backend() ?: return@thread
+            val out = run("cmd jobscheduler cancel -u 0 com.android.thememanager 64 2>&1").trim()
+            log("🛡 Bảo vệ tiếng Việt:\n" + out.ifEmpty { "đã hủy job kiểm tra của app Giao diện" } +
+                "\n\nĐây là bảo vệ một lần. Nếu theme vẫn bị đổi về tiếng Anh, bấm nút này lại.")
         }
     }
 
@@ -1307,7 +1387,8 @@ class MainActivity : Activity() {
             val run = backend() ?: return@thread
             val out = run(
                 "ls -laR /data/system/theme 2>&1 | head -40; echo ---; " +
-                "ls -la /data/system/theme_magic 2>&1 | head -20").trim()
+                "ls -la /data/system/theme_magic 2>&1 | head -20; echo --- LOGCAT ---; " +
+                "logcat -d -t 600 2>&1 | grep -i -E 'thememanager|miui.theme|ThemeRuntime' | tail -40").trim()
             log(out.ifEmpty { "(trống)" })
         }
     }
