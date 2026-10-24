@@ -38,6 +38,8 @@ object License {
     private const val AUTO_REFRESH_GAP_MS = 10L * 60 * 1000
     private const val SAME_BOOT_TOLERANCE_MS = 120_000L
     private const val CLOCK_SKEW_TOLERANCE_MS = 5L * 60 * 1000
+    // Máy đang ACTIVE mà máy chủ trả PENDING/trạng thái lạ: phải gặp ngần này lần liên tiếp mới tin (tránh lỗi thoáng qua)
+    private const val PENDING_CONFIRM = 3
 
     // ĐÃ CẬP NHẬT MÃ SHA-256 MỚI (Từ ảnh chụp màn hình của bạn)
     private const val EXPECTED_CERT = "32D7C9EDC4C1EC26CE591006E9C9CDDF142BA04E2F57A0340AAAA5740357DBB4"
@@ -245,7 +247,20 @@ object License {
                 val payload = "v3|$kid|$nonce|$device|$fp|$status|$expiry|$st"
                 if (!verify(payload, sig)) return local(c)
 
+                val p0 = sp(c)
+                record(c, status)
+                val known = status == "ACTIVE" || status == "REVOKED" || status == "EXPIRED"
+                if (!known && p0.getString("status", null) == "ACTIVE") {
+                    val n = p0.getInt("pend_n", 0) + 1
+                    if (n < PENDING_CONFIRM) {
+                        // Giữ nguyên bản ACTIVE cũ, chờ lần xác nhận kế tiếp
+                        p0.edit().putInt("pend_n", n).putLong("last_try", System.currentTimeMillis()).apply()
+                        return local(c)
+                    }
+                }
+
                 sp(c).edit()
+                    .putInt("pend_n", 0)
                     .putString("kid",    kid)
                     .putString("nonce",  nonce)
                     .putString("status", status)
@@ -265,6 +280,18 @@ object License {
             refreshing.set(false)
         }
     }
+
+    /** Nhật ký trạng thái máy chủ trả về (chỉ ghi khi đổi trạng thái), tối đa 8 dòng, để chẩn đoán. */
+    private fun record(c: Context, status: String) {
+        val p = sp(c)
+        val lines = (p.getString("hist", "") ?: "").split("\n").filter { it.isNotEmpty() }
+        if (lines.lastOrNull()?.substringAfterLast(' ') == status) return
+        val line = java.text.SimpleDateFormat("dd/MM HH:mm:ss", java.util.Locale.US)
+            .format(java.util.Date()) + " " + status
+        p.edit().putString("hist", (lines + line).takeLast(8).joinToString("\n")).apply()
+    }
+
+    fun history(c: Context): String = sp(c).getString("hist", "") ?: ""
 
     fun refreshIfDue(c: Context, gapMs: Long = AUTO_REFRESH_GAP_MS): State {
         val p = sp(c)
