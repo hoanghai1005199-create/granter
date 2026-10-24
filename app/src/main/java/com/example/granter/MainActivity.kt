@@ -43,28 +43,9 @@ class MainActivity : Activity() {
         "sacom", "vpbank", "hdbank", "msb", "shb", "ocb", "acb", "napas"
     )
 
+    // Quyền đặc biệt (cấp bằng appops, không dùng được pm grant). Quyền runtime (CAMERA, MIC, VỊ TRÍ, DANH BẠ...) vẫn được pm grant.
     private val DANGEROUS_PERMS = setOf(
-        "android.permission.READ_SMS", "android.permission.SEND_SMS",
-        "android.permission.RECEIVE_SMS", "android.permission.RECEIVE_MMS",
-        "android.permission.RECEIVE_WAP_PUSH",
-        "android.permission.READ_CALL_LOG", "android.permission.WRITE_CALL_LOG",
-        "android.permission.CALL_PHONE", "android.permission.ANSWER_PHONE_CALLS",
-        "android.permission.PROCESS_OUTGOING_CALLS",
-        "android.permission.READ_CONTACTS", "android.permission.WRITE_CONTACTS",
-        "android.permission.GET_ACCOUNTS",
-        "android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_BACKGROUND_LOCATION",
-        "android.permission.READ_PHONE_STATE", "android.permission.READ_PHONE_NUMBERS",
-        "android.permission.READ_EXTERNAL_STORAGE", "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.MANAGE_EXTERNAL_STORAGE",
-        "android.permission.READ_MEDIA_IMAGES", "android.permission.READ_MEDIA_VIDEO",
-        "android.permission.READ_MEDIA_AUDIO",
-        "android.permission.CAMERA", "android.permission.RECORD_AUDIO",
-        "android.permission.BODY_SENSORS", "android.permission.BODY_SENSORS_BACKGROUND",
-        "android.permission.ACTIVITY_RECOGNITION",
-        "android.permission.BLUETOOTH_CONNECT", "android.permission.BLUETOOTH_SCAN",
-        "android.permission.NEARBY_WIFI_DEVICES",
-        "android.permission.POST_NOTIFICATIONS",
         "android.permission.SYSTEM_ALERT_WINDOW", "android.permission.WRITE_SETTINGS",
         "android.permission.PACKAGE_USAGE_STATS",
         "android.permission.REQUEST_INSTALL_PACKAGES",
