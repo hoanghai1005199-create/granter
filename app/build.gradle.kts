@@ -10,7 +10,7 @@ android {
 
     defaultConfig {
         applicationId = "com.example.granter"
-        minSdk = 21
+        minSdk = 23
         targetSdk = 22
         versionCode = 2
         versionName = "1.1"
