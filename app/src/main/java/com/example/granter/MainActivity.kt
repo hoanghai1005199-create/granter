@@ -546,9 +546,9 @@ class MainActivity : Activity() {
 
     private fun shizukuAlive(): Boolean = try { Shizuku.pingBinder() } catch (ignored: Throwable) { false }
 
-    private fun updateStatus() {
+    private fun updateStatus(force: Boolean = false) {
         val now = System.currentTimeMillis()
-        if (now - lastStatusMs < 5000 && lastStatusText.isNotEmpty()) {
+        if (!force && now - lastStatusMs < 5000 && lastStatusText.isNotEmpty()) {
             tvStatus.text = lastStatusText
             tvHealth.text = lastHealthText
             return
@@ -704,7 +704,7 @@ class MainActivity : Activity() {
             log(if (ok) "Đã kết nối ADB ✅" else
                 "Kết nối thất bại. Hãy bật Gỡ lỗi không dây (cần Wi-Fi) và ghép nối trước.\n" +
                         AdbBackend.lastError)
-            updateStatus()
+            updateStatus(true)
             if (ok && !Guard.canWrite(this)) {
                 runOnUiThread { grantMany(listOf(AppItem("HH tool", packageName, false, -1)), remember = false) }
             }
@@ -718,7 +718,7 @@ class MainActivity : Activity() {
                 HhServer.stop(this)
                 Thread.sleep(500)
                 log("Đã tắt máy chủ shell.")
-                updateStatus()
+                updateStatus(true)
                 return@thread
             }
             val run = backend() ?: return@thread
@@ -726,7 +726,7 @@ class MainActivity : Activity() {
             log(if (ok) "✅ Máy chủ shell đang chạy.\nVẫn cần giữ gỡ lỗi USB/không dây, " +
                     "máy chủ vẫn chạy đến khi khởi động lại máy."
             else "❌ ${HhServer.lastError}")
-            updateStatus()
+            updateStatus(true)
         }
     }
 
@@ -803,7 +803,7 @@ class MainActivity : Activity() {
             log(if (conn) "✅ Ghép nối và kết nối thành công"
                 else "Đã ghép nối. Bấm KẾT NỐI ADB")
             runOnUiThread { pairBox.visibility = View.GONE; etCode.setText("") }
-            updateStatus()
+            updateStatus(true)
         }
     }
 
