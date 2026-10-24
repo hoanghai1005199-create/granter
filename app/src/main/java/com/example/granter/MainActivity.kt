@@ -257,7 +257,6 @@ class MainActivity : Activity() {
             addView(list)
             addView(tvSelected)
             addView(blueButton(" Cấp full quyền cho app bạn đã chọn") { showTab(2); grantChecked() })
-            addView(blueButton(" Mở cài đặt pin (ưu tiên MXH & ngân hàng)") { openBatterySettingsFlow() })
         }
         // Trang 1: app đã cấp
         val pagePinned = ScrollView(this).apply {
@@ -469,38 +468,6 @@ class MainActivity : Activity() {
         toast("Không mở được, hãy vào Cài đặt > Ứng dụng > HH tool để chỉnh")
     }
 
-    /** Dẫn người dùng lần lượt qua trang Cài đặt pin của từng app đã tích,
-     *  ưu tiên Mạng xã hội + Ngân hàng trước. Chỉ MỞ trang hệ thống —
-     *  người dùng tự tay bấm "Không hạn chế", app không tự set hộ. */
-    private fun openBatterySettingsFlow() {
-        val apps = all.filter { it.pkg in checked }
-            .sortedByDescending { isSocial(it) || isBank(it) }
-        if (apps.isEmpty()) { toast("Hãy tích chọn ít nhất 1 ứng dụng"); return }
-        showBatteryStep(apps, 0)
-    }
-
-    private fun showBatteryStep(apps: List<AppItem>, index: Int) {
-        if (index >= apps.size) { toast("Đã dẫn xong ${apps.size} ứng dụng"); return }
-        val app = apps[index]
-        val tag = if (isSocial(app) || isBank(app)) " ⭐" else ""
-        val d = android.app.AlertDialog.Builder(this)
-            .setTitle("(${index + 1}/${apps.size}) ${app.label}$tag")
-            .setMessage("Bấm \"Mở cài đặt pin\" rồi vào mục \"Tiết kiệm pin\" > chọn " +
-                    "\"Không hạn chế\" cho ${app.label}.\nXong thì quay lại đây, bấm \"Tiếp theo\".")
-            .setCancelable(false)
-            .setPositiveButton("Mở cài đặt pin", null)
-            .setNeutralButton("Tiếp theo") { _, _ -> showBatteryStep(apps, index + 1) }
-            .setNegativeButton("Dừng lại", null)
-            .create()
-        d.show()
-        d.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
-            tryStart(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                android.net.Uri.parse("package:${app.pkg}")))
-        }
-        styleDialog(d)
-        d.getButton(android.content.DialogInterface.BUTTON_NEUTRAL)?.setTextColor(ACCENT_TEXT)
-    }
-
     private fun openPowerSettings() = tryStart(
         Intent().setClassName("com.miui.powerkeeper", "com.miui.powerkeeper.ui.HiddenAppsConfigActivity")
             .putExtra("package_name", packageName).putExtra("package_label", "HH tool"),
@@ -573,7 +540,7 @@ class MainActivity : Activity() {
             val adbTxt = "ADB tích hợp (" +
                     (if (AdbBackend.isConnected(this)) "đã kết nối ✅" else "chưa kết nối") + ")"
             val shizTxt = if (shizukuAlive()) "Shizuku đang chạy" else "Shizuku chưa chạy ❌"
-            val srvTxt = if (srv) "Máy chủ shell HH tool đang chạy ✅" else "Máy chủ shell chưa chạy ❌"
+            val srvTxt = if (srv) "Máy chủ shell HH Tool đang chạy ✅" else "Máy chủ shell chưa chạy ❌"
             val txt = when (mode) {
                 "shizuku" -> "Chế độ (chọn tay): $shizTxt"
                 "server" -> "Chế độ (chọn tay): $srvTxt"
@@ -886,20 +853,12 @@ class MainActivity : Activity() {
             return
         }
         val want = Guard.wanted(this).toSet()
-        val sb = StringBuilder("Millet đang có ${list.size} gói:\n\n")
-        for (pkg in list) {
-            val label = try {
-                packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
-            } catch (e: Exception) { null }
-            val tag = if (pkg in want) "🛡" else "•"
-            sb.append("$tag ${label ?: "(chưa cài)"}\n   $pkg\n")
-        }
-        val missing = want.filter { it !in list }
-        if (missing.isNotEmpty()) {
-            sb.append("\n⚠ Đang thiếu so với danh sách cần giữ:\n")
-            missing.forEach { sb.append("   $it\n") }
-        }
-        sb.append("\n🛡 = gói Granter giữ (mặc định, đã ghim, đã sửa)")
+        val protectedCount = list.count { it in want }
+        val missingCount = want.count { it !in list }
+        val sb = StringBuilder("Đã fix ${list.size} ứng dụng")
+        if (protectedCount > 0) sb.append(" ($protectedCount do Granter giữ)")
+        sb.append(".\n")
+        if (missingCount > 0) sb.append("⚠ Thiếu $missingCount mục so với danh sách cần giữ.\n")
         sb.append(freezerInfo())
         tvLog.text = sb.toString()
     }
@@ -1002,7 +961,7 @@ class MainActivity : Activity() {
         val fmt = java.text.SimpleDateFormat("EEE dd/MM HH:mm:ss", java.util.Locale("vi"))
         val sb = StringBuilder()
         if (log.isEmpty()) {
-            sb.append("Chưa ghi nhận lần ghi đè nào.\n\nMỗi khi hệ thống ghi đè Millet hoặc danh sách freeze và app nối lại, giờ sẽ được lưu ở đây (cần bật Tự động giữ).")
+            sb.append("Chưa ghi nhận lần ghi đè nào.\n\nMỗi khi hệ thống ghi đè và app nối lại, giờ sẽ được lưu ở đây (cần bật Tự động giữ).")
         } else {
             val gaps = log.map { it.first }.sorted().zipWithNext { a, b -> b - a }
             sb.append("Tổng ${log.size} lần (giữ tối đa 100)\n")
@@ -1101,7 +1060,7 @@ class MainActivity : Activity() {
     }
 
     private fun enableGuard(auto: Boolean = false) {
-        tvLog.text = "Đang bật tự động giữ...\n"
+        tvLog.text = "Đang bật tự động fix...\n"
         thread {
             if (!Guard.hasSecure(this) && (shizukuAlive() || HhServer.ping(this) || AdbBackend.isConnected(this))) {
                 val run = backend()
@@ -1109,7 +1068,7 @@ class MainActivity : Activity() {
             }
             if (!Guard.canWrite(this) && !HhServer.ping(this)) {
                 if (auto) {
-                    log("Tự động giữ chưa bật được: chưa có quyền ghi cài đặt.\n" +
+                    log("Tự động fix chưa bật được: chưa có quyền ghi cài đặt.\n" +
                             "Bật Máy chủ shell (hoặc Kết nối ADB) rồi bấm ⚡ Cấp full quyền, từ sau mở app là tự chạy.")
                     return@thread
                 }
@@ -1131,14 +1090,14 @@ class MainActivity : Activity() {
             Guard.fire(this)
             runOnUiThread { startGuard() }
             val mode = if (Guard.hasSecure(this)) "WRITE_SECURE_SETTINGS" else "Sửa đổi cài đặt hệ thống"
-            log("✅ Đã bật tự động giữ (quyền: $mode).\n" +
-                    "• Ghi Millet no-restrict cho Google + app đã ghim + HH tool\n" +
-                    "• Tự động fix + FCM (" +
+            log("✅ Đã bật tự động fix (quyền: $mode).\n" +
+                    "• Tự động fix đã bật\n" +
+                    "• Đang tự động fix  (" +
                     (if (GuardJob.supported() && GuardJob.schedule(applicationContext))
                         "Hệ thống tự vận hành✅"
                     else "dịch vụ nền có thông báo") + ")\n" +
                     "• Tự chạy lại sau khi khởi động máy\n\n" +
-                    "Chúc mừng bạn.")
+                    "Chúc bạn trải nghiệm vui vẻ.")
         }
     }
 
@@ -1192,14 +1151,13 @@ class MainActivity : Activity() {
         val out = run(script)
 
         var ok = 0
-        val sb = StringBuilder()
+        var skipped = 0
         var cur: String? = null
         val body = StringBuilder()
         fun flush() {
             val c = cur ?: return
             val o = body.toString().trim()
-            if (o.isEmpty() || o.startsWith("Added")) ok++
-            else sb.append("• $c\n  → ${o.take(80)}\n")
+            if (o.isEmpty() || o.startsWith("Added")) ok++ else skipped++
             body.setLength(0)
         }
         for (line in out.lines()) {
@@ -1209,12 +1167,16 @@ class MainActivity : Activity() {
         flush()
 
         val uid = try { packageManager.getApplicationInfo(pkg, 0).uid } catch (e: Throwable) { -1 }
-        val ch = run("CLASSPATH=$packageCodePath app_process /system/bin " +
+        val chOut = run("CLASSPATH=$packageCodePath app_process /system/bin " +
                 "com.example.granter.ChannelFixer $pkg $uid 2>&1").trim()
-        val ml = run(milletScript(listOf(pkg) + Guard.DEFAULT + packageName)).trim()
+        val mlOut = run(milletScript(listOf(pkg) + Guard.DEFAULT + packageName)).trim()
+        val chOk = !chOut.startsWith("Không bật được")
+        val mlOk = mlOut.isNotEmpty()
 
-        return "✅ ${app.label}: $ok/${cmds.size} lệnh OK\n🔔 ${ch.take(200)}\n🛡 ${ml.take(200)}\n" +
-                (if (sb.isNotEmpty()) "Lệnh bị bỏ qua (bình thường nếu quyền không áp dụng):\n$sb" else "")
+        return "✅ ${app.label}: $ok/${cmds.size} lệnh OK" +
+                (if (skipped > 0) " ($skipped lệnh bỏ qua)" else "") + "\n" +
+                "🔔 Kênh thông báo: ${if (chOk) "đã cập nhật" else "không cập nhật được"}\n" +
+                "🛡 Bảo vệ nền: ${if (mlOk) "đã áp dụng" else "không áp dụng được"}\n"
     }
 
     private fun isSocial(a: AppItem) =
@@ -1248,7 +1210,7 @@ class MainActivity : Activity() {
         if (n == 0) { toast("Không thấy ứng dụng mạng xã hội / ngân hàng nào"); return }
         android.app.AlertDialog.Builder(this)
             .setTitle("Cấp full quyền")
-            .setMessage("Sẽ cấp toàn bộ quyền với 1 nhấn cho $n ứng dụng mạng xã hội, ngân hàng. Tiếp tục?")
+            .setMessage("Sẽ cấp toàn bộ quyền thông báo cần thiết với 1 nhấn cho $n ứng dụng mạng xã hội, ngân hàng. Tiếp tục?")
             .setPositiveButton("Cấp") { _, _ -> fixAll() }
             .setNegativeButton("Hủy", null)
             .show().also { styleDialog(it) }
@@ -1286,7 +1248,8 @@ class MainActivity : Activity() {
                 done.append("${app.label}  | pin: $bat  | tự khởi chạy: $au\n")
             }
             val pkgs = targets.map { it.pkg }
-            val ml = run(milletScript(pkgs + Guard.DEFAULT + packageName)).trim()
+            val mlOut = run(milletScript(pkgs + Guard.DEFAULT + packageName)).trim()
+            val mlOk = mlOut.isNotEmpty()
             val fixed = prefs.getStringSet("fixed", emptySet())!!.toMutableSet()
             fixed.addAll(pkgs)
             prefs.edit().putStringSet("fixed", fixed).apply()
@@ -1298,7 +1261,7 @@ class MainActivity : Activity() {
                 Guard.fire(this)
                 runOnUiThread { startGuard() }
             }
-            log("✅ Đã sửa ${targets.size} ứng dụng\n🛡 ${ml.take(200)}\n" +
+            log("✅ Đã sửa ${targets.size} ứng dụng\n🛡 Bảo vệ nền: ${if (mlOk) "đã áp dụng" else "không áp dụng được"}\n" +
                     (if (guardOn) "🔒 Đã bật tự động fix\n\n"
                     else "⚠ Chưa bật được tự động fix (thiếu quyền ghi cài đặt hệ thống). Bật Máy chủ shell hoặc Kết nối ADB rồi mở lại app.\n\n") +
                     done)
