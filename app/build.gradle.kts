@@ -6,13 +6,33 @@ plugins {
 android {
     namespace = "com.example.granter"
     compileSdk = 34
+    ndkVersion = "26.1.10909125" 
+
     defaultConfig {
         applicationId = "com.example.granter"
-        minSdk = 26
-        targetSdk = 34
+        minSdk = 21
+        targetSdk = 22
         versionCode = 2
         versionName = "1.1"
+
+        ndk {
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+        }
+        externalNativeBuild {
+            cmake {
+                cppFlags += "-std=c++17"
+                arguments += "-DANDROID_STL=c++_shared"
+            }
+        }
     }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
     signingConfigs {
         create("release") {
             val p = System.getenv("KEYSTORE_PATH")
@@ -28,6 +48,12 @@ android {
         release {
             if (System.getenv("KEYSTORE_PATH") != null)
                 signingConfig = signingConfigs.getByName("release")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
     compileOptions {

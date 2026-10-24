@@ -17,21 +17,24 @@ import android.os.Looper
 import android.provider.Settings
 import kotlin.concurrent.thread
 
-/** Chạy nền: khi PowerKeeper ghi đè danh sách Millet hoặc bật màn hình thì ghi lại + đá FCM. */
+/** Chạy nền: chỉ soi danh sách Millet, khi PowerKeeper ghi đè thì ghi lại + đá FCM. Không nghe bật/mở khóa màn hình. */
 class GuardService : Service() {
 
     private val h = Handler(Looper.getMainLooper())
-    private val task = Runnable { thread { Guard.fire(applicationContext) } }
+    @Volatile private var logNext = false
+    private val task = Runnable {
+        val l = logNext; logNext = false
+        thread { Guard.fire(applicationContext, l) }
+    }
     private val licTask = object : Runnable {
         override fun run() {
             thread {
-                if (License.refresh(applicationContext) != License.State.ACTIVE) h.post { stopSelf() }
+                if (License.refresh(applicationContext) != License.State.ACTIVE || !Gate.ok(applicationContext)) h.post { stopSelf() }
             }
-            h.postDelayed(this, 30 * 60 * 1000L)
+            h.postDelayed(this, 5 * 60 * 1000L)   // hỏi server mỗi 5 phút
         }
     }
     private var obs: ContentObserver? = null
-    private var rcv: BroadcastReceiver? = null
 
     private fun schedule() {
         h.removeCallbacks(task)
@@ -43,20 +46,12 @@ class GuardService : Service() {
     override fun onCreate() {
         super.onCreate()
         val o = object : ContentObserver(h) {
-            override fun onChange(selfChange: Boolean) { schedule() }
+            override fun onChange(selfChange: Boolean) { logNext = true; schedule() }
         }
         obs = o
         try {
             contentResolver.registerContentObserver(Settings.System.getUriFor(Guard.KEY), false, o)
         } catch (e: Throwable) {}
-        val r = object : BroadcastReceiver() {
-            override fun onReceive(c: Context, i: Intent) { schedule() }
-        }
-        rcv = r
-        val f = IntentFilter(Intent.ACTION_SCREEN_ON)
-        f.addAction(Intent.ACTION_USER_PRESENT)
-        if (Build.VERSION.SDK_INT >= 33) registerReceiver(r, f, Context.RECEIVER_NOT_EXPORTED)
-        else registerReceiver(r, f)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -73,6 +68,7 @@ class GuardService : Service() {
             startForeground(7, n)
         }
         if (License.local(this) != License.State.ACTIVE) { stopSelf(); return START_NOT_STICKY }
+        if (!Gate.ok(this)) { stopSelf(); return START_NOT_STICKY }
         h.removeCallbacks(licTask)
         h.post(licTask)
         schedule()
@@ -83,7 +79,6 @@ class GuardService : Service() {
         h.removeCallbacks(task)
         h.removeCallbacks(licTask)
         try { obs?.let { contentResolver.unregisterContentObserver(it) } } catch (e: Throwable) {}
-        try { rcv?.let { unregisterReceiver(it) } } catch (e: Throwable) {}
         super.onDestroy()
     }
 }
