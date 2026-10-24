@@ -26,17 +26,37 @@ object ChannelFixer {
                 .invoke(nm, pkg, uid, false)
             val list = slice!!.javaClass.getMethod("getList").invoke(slice) as List<*>
             var fixed = 0
+            val defSound = android.provider.Settings.System.DEFAULT_NOTIFICATION_URI
+            val attrs = android.media.AudioAttributes.Builder()
+                .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
             for (c in list) {
                 val ch = c as NotificationChannel
-                if (ch.importance == NotificationManager.IMPORTANCE_NONE) {
-                    ch.importance = NotificationManager.IMPORTANCE_DEFAULT
-                    cls.getMethod("updateNotificationChannelForPackage",
-                        String::class.java, i, NotificationChannel::class.java)
-                        .invoke(nm, pkg, uid, ch)
-                    fixed++
+                var changed = false
+                // Thông báo nổi (heads-up) = IMPORTANCE_HIGH
+                if (ch.importance != NotificationManager.IMPORTANCE_HIGH) {
+                    ch.importance = NotificationManager.IMPORTANCE_HIGH; changed = true
+                }
+                // Âm thanh: nếu đang None thì đặt âm thông báo mặc định
+                if (ch.sound == null) { ch.setSound(defSound, attrs); changed = true }
+                // Rung
+                if (!ch.shouldVibrate()) { ch.enableVibration(true); changed = true }
+                // Màn hình khóa: hiện đầy đủ
+                if (ch.lockscreenVisibility != android.app.Notification.VISIBILITY_PUBLIC) {
+                    ch.lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC; changed = true
+                }
+                if (!ch.canShowBadge()) { ch.setShowBadge(true); changed = true }
+                if (changed) {
+                    try {
+                        cls.getMethod("updateNotificationChannelForPackage",
+                            String::class.java, i, NotificationChannel::class.java)
+                            .invoke(nm, pkg, uid, ch)
+                        fixed++
+                    } catch (ignored: Throwable) {}
                 }
             }
-            println("Kênh thông báo: bật lại $fixed/${list.size} kênh đang tắt")
+            println("Kênh thông báo: đã bật full (nổi, âm thanh, rung, màn hình khóa) $fixed/${list.size} kênh")
         } catch (t: Throwable) {
             println("Không bật được kênh thông báo: ${(t.cause ?: t).message}")
         }

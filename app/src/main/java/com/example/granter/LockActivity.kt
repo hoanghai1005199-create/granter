@@ -36,7 +36,8 @@ class LockActivity : Activity() {
                         finish()
                     } else {
                         tv.text = when (s) {
-                            License.State.PENDING -> "Đang chờ cấp quyền... Khi được duyệt, app sẽ tự mở."
+                            License.State.PENDING -> "Đang chờ cấp quyền... Khi được duyệt, app sẽ tự mở." +
+                                (License.history(applicationContext).let { if (it.isEmpty()) "" else "\n\nMáy chủ trả lời gần đây:\n$it" })
                             License.State.REVOKED -> "Quyền của thiết bị này đã bị thu hồi. Liên hệ TikTok @hh_1059 để được hỗ trợ."
                             License.State.EXPIRED -> "Quyền sử dụng đã hết hạn. Liên hệ TikTok @hh_1059 để gia hạn."
                             else -> "Không kết nối được máy chủ, kiểm tra mạng"

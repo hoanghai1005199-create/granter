@@ -19,6 +19,12 @@
         android:label="HH tool"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
 
+        <!-- targetSdk thấp (22) khiến hệ thống ép tỉ lệ 16:9 và chừa vạch đen dưới màn hình.
+             Khai báo tỉ lệ tối đa lớn để app chiếm toàn màn hình. -->
+        <meta-data
+            android:name="android.max_aspect_ratio"
+            android:value="3.0" />
+
         <provider
             android:name="rikka.shizuku.ShizukuProvider"
             android:authorities="${applicationId}.shizuku"
@@ -40,15 +46,20 @@
                 android:value="Keep push notifications reliable" />
         </service>
 
+        <service
+            android:name=".GuardJob"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
         <receiver android:name=".BootReceiver" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
 
-        <activity android:name=".LockActivity" android:exported="false" />
+        <activity android:name=".LockActivity" android:exported="false" android:resizeableActivity="true" />
 
-        <activity android:name=".MainActivity" android:exported="true">
+        <activity android:name=".MainActivity" android:exported="true" android:resizeableActivity="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
