@@ -257,6 +257,7 @@ class MainActivity : Activity() {
             addView(list)
             addView(tvSelected)
             addView(blueButton(" Cấp full quyền cho app bạn đã chọn") { showTab(2); grantChecked() })
+            addView(blueButton(" Mở cài đặt pin (ưu tiên MXH & ngân hàng)") { openBatterySettingsFlow() })
         }
         // Trang 1: app đã cấp
         val pagePinned = ScrollView(this).apply {
@@ -466,6 +467,38 @@ class MainActivity : Activity() {
             try { startActivity(i); return } catch (ignored: Exception) {}
         }
         toast("Không mở được, hãy vào Cài đặt > Ứng dụng > HH tool để chỉnh")
+    }
+
+    /** Dẫn người dùng lần lượt qua trang Cài đặt pin của từng app đã tích,
+     *  ưu tiên Mạng xã hội + Ngân hàng trước. Chỉ MỞ trang hệ thống —
+     *  người dùng tự tay bấm "Không hạn chế", app không tự set hộ. */
+    private fun openBatterySettingsFlow() {
+        val apps = all.filter { it.pkg in checked }
+            .sortedByDescending { isSocial(it) || isBank(it) }
+        if (apps.isEmpty()) { toast("Hãy tích chọn ít nhất 1 ứng dụng"); return }
+        showBatteryStep(apps, 0)
+    }
+
+    private fun showBatteryStep(apps: List<AppItem>, index: Int) {
+        if (index >= apps.size) { toast("Đã dẫn xong ${apps.size} ứng dụng"); return }
+        val app = apps[index]
+        val tag = if (isSocial(app) || isBank(app)) " ⭐" else ""
+        val d = android.app.AlertDialog.Builder(this)
+            .setTitle("(${index + 1}/${apps.size}) ${app.label}$tag")
+            .setMessage("Bấm \"Mở cài đặt pin\" rồi vào mục \"Tiết kiệm pin\" > chọn " +
+                    "\"Không hạn chế\" cho ${app.label}.\nXong thì quay lại đây, bấm \"Tiếp theo\".")
+            .setCancelable(false)
+            .setPositiveButton("Mở cài đặt pin", null)
+            .setNeutralButton("Tiếp theo") { _, _ -> showBatteryStep(apps, index + 1) }
+            .setNegativeButton("Dừng lại", null)
+            .create()
+        d.show()
+        d.getButton(android.content.DialogInterface.BUTTON_POSITIVE).setOnClickListener {
+            tryStart(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                android.net.Uri.parse("package:${app.pkg}")))
+        }
+        styleDialog(d)
+        d.getButton(android.content.DialogInterface.BUTTON_NEUTRAL)?.setTextColor(ACCENT_TEXT)
     }
 
     private fun openPowerSettings() = tryStart(
